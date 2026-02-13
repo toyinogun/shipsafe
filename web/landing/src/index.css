@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #0d7ff2;
+  --color-background-light: #f5f7f8;
+  --color-background-dark: #101922;
+  --color-surface-dark: #161e29;
+  --color-surface-darker: #0b1118;
+  --color-accent-green: #22c55e;
+  --color-accent-yellow: #eab308;
+  --color-accent-red: #ef4444;
+
+  --font-display: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+/* Glass navigation */
+.glass-nav {
+  background: rgba(16, 25, 34, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Terminal glow */
+.glow-effect {
+  box-shadow: 0 0 40px -10px rgba(13, 127, 242, 0.3);
+}
+
+/* Code syntax highlighting */
+.code-keyword { color: #c678dd; }
+.code-func { color: #61afef; }
+.code-string { color: #98c379; }
+.code-comment { color: #5c6370; }
+
+/* Grid background pattern */
+.grid-bg {
+  background-size: 40px 40px;
+  background-image:
+    linear-gradient(to right, #1f2937 1px, transparent 1px),
+    linear-gradient(to bottom, #1f2937 1px, transparent 1px);
+}
