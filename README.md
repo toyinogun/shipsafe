@@ -150,6 +150,34 @@ jobs:
 - AI-powered code review catching logic bugs, null pointer issues, and missing edge cases
 - Static analysis for secrets, complexity, test coverage, and bad patterns
 
+## Supported Languages
+
+ShipSafe runs 5 static analyzers (complexity, coverage, secrets, imports, patterns) plus optional AI review. Language support depends on how many analyzers have explicit patterns for each language.
+
+### Full Support (all 5 static analyzers + AI review)
+
+| Language | Complexity | Coverage | Secrets | Imports | Patterns |
+|----------|-----------|----------|---------|---------|----------|
+| **Go** | `func` detection | `_test.go` | Generic + entropy | `go.mod` | `fmt.Print*`, `catch{}`, SQL via `fmt.Sprintf`/`%s` |
+| **Python** | `def`/`async def` detection | `test_*.py`, `*_test.py` | Generic + entropy | `requirements.txt`, `pyproject.toml`, `Pipfile`, `poetry.lock` | `print()`, `except:`, SQL via f-strings/`%s` |
+| **JavaScript** | `function`, arrow functions | `.test.js`, `.spec.js` | Generic + entropy + JSX-aware | `package.json`, `yarn.lock`, `pnpm-lock.yaml` | `console.*`, `catch{}`, SQL concat |
+| **TypeScript** | `function`, arrow functions | `.test.ts`, `.spec.ts` | Generic + entropy + TSX-aware | `package.json`, `yarn.lock`, `pnpm-lock.yaml` | `console.*`, `catch{}`, SQL concat |
+
+### Partial Support (some static analyzers + AI review)
+
+| Language | What works | What's missing |
+|----------|-----------|----------------|
+| **Java** | Function detection (access-modifier pattern), imports (`pom.xml`, `build.gradle`), `System.out.print*`, `catch{}`, SQL concat | Test file mapping (`*Test.java` not recognized by coverage analyzer) |
+| **Ruby** | `def` detection, test mapping (`_test.rb`, `_spec.rb`), imports (`Gemfile`), `puts`/`pp` debug prints | `rescue` block detection, string-interpolation SQL |
+| **Rust** | `fn`/`pub fn` detection, test dir mapping (`tests/`), imports (`Cargo.toml`) | `println!`/`dbg!` macros (not matched by regex), Rust-specific anti-patterns |
+| **C#** | Method detection (access-modifier pattern), `catch{}` | Test mapping, NuGet/`.csproj` manifests, `Console.WriteLine` |
+| **Kotlin** | Imports (`build.gradle.kts`), `println()`, `catch{}` | `fun` keyword not in function detection patterns |
+| **PHP** | Function detection (via `function` keyword), imports (`composer.json`) | Test mapping (`*Test.php`), `var_dump`/`print_r` |
+
+### AI-Only Support (any language)
+
+The AI reviewer sends the full diff to an LLM with language-agnostic prompts for semantic, logic, and convention analysis. This works on **any language** the LLM can read (C, C++, Swift, Scala, Elixir, Haskell, Lua, Shell, SQL, HCL, etc.), but static analyzers may produce incomplete results for unlisted languages. The secrets analyzer (regex + Shannon entropy) also works on all text files regardless of language.
+
 ## Architecture
 
 See [DESIGN.md](DESIGN.md) for the full system design.
