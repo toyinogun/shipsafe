@@ -18,10 +18,22 @@ const (
 	DefaultMultiplierSecrets    = 2.0
 	DefaultMultiplierLogic      = 1.3
 	DefaultMultiplierComplexity = 0.8
-	DefaultMultiplierCoverage   = 0.7
+	DefaultMultiplierCoverage   = 0.4
 	DefaultMultiplierPattern    = 0.5
-	DefaultMultiplierImport     = 0.6
+	DefaultMultiplierImport     = 0.3
 	DefaultMultiplierConvention = 0.3
+)
+
+// Per-category penalty caps prevent one noisy category from dominating the score.
+const (
+	CategoryPenaltyCap         = 25 // Max penalty any single category can contribute
+	CriticalCategoryPenaltyCap = 40 // Higher cap for security/secrets with critical/high findings
+)
+
+// Severity floors ensure the score reflects actual risk level.
+const (
+	MinScoreNoCriticalNoHigh = 30 // Floor when no critical and no high findings
+	MinScoreNoCritical       = 15 // Floor when no critical findings (but has high)
 )
 
 // SeverityWeights maps severity levels to their base penalty points.

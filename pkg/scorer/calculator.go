@@ -56,12 +56,20 @@ func NewCalculator(opts ...Option) *Calculator {
 // Score computes a TrustScore from analysis results.
 // Formula: start at 100, subtract penalty per finding.
 // penalty = severity_weight * category_multiplier * confidence
+// Per-category penalties are capped to prevent one noisy category from dominating.
+// Severity floors ensure the score reflects actual risk level.
 // Score is clamped to [0, 100].
 func (c *Calculator) Score(results []*interfaces.AnalysisResult) *interfaces.TrustScore {
-	breakdown := make(map[interfaces.Category]int)
+	type categoryInfo struct {
+		penalty     float64
+		hasCritical bool
+		hasHigh     bool
+	}
+
+	categories := make(map[interfaces.Category]*categoryInfo)
 	findingCount := make(map[interfaces.Severity]int)
 
-	var totalPenalty float64
+	var hasCritical, hasHigh bool
 
 	for _, result := range results {
 		if result == nil || result.Error != nil {
@@ -76,11 +84,45 @@ func (c *Calculator) Score(results []*interfaces.AnalysisResult) *interfaces.Tru
 			}
 
 			penalty := float64(weight) * multiplier * confidence
-			totalPenalty += penalty
 
-			breakdown[f.Category] += int(math.Round(penalty))
+			ci, ok := categories[f.Category]
+			if !ok {
+				ci = &categoryInfo{}
+				categories[f.Category] = ci
+			}
+			ci.penalty += penalty
+
+			if f.Severity == interfaces.SeverityCritical {
+				ci.hasCritical = true
+				hasCritical = true
+			}
+			if f.Severity == interfaces.SeverityHigh {
+				ci.hasHigh = true
+				hasHigh = true
+			}
+
 			findingCount[f.Severity]++
 		}
+	}
+
+	// Apply per-category caps and compute total penalty.
+	var totalPenalty float64
+	breakdown := make(map[interfaces.Category]int)
+
+	for cat, ci := range categories {
+		cap := float64(CategoryPenaltyCap)
+		if (cat == interfaces.CategorySecurity || cat == interfaces.CategorySecrets) &&
+			(ci.hasCritical || ci.hasHigh) {
+			cap = float64(CriticalCategoryPenaltyCap)
+		}
+
+		capped := ci.penalty
+		if capped > cap {
+			capped = cap
+		}
+
+		totalPenalty += capped
+		breakdown[cat] = int(math.Round(capped))
 	}
 
 	score := 100 - int(math.Round(totalPenalty))
@@ -89,6 +131,13 @@ func (c *Calculator) Score(results []*interfaces.AnalysisResult) *interfaces.Tru
 	}
 	if score > 100 {
 		score = 100
+	}
+
+	// Apply severity floors.
+	if !hasCritical && !hasHigh && score < MinScoreNoCriticalNoHigh {
+		score = MinScoreNoCriticalNoHigh
+	} else if !hasCritical && score < MinScoreNoCritical {
+		score = MinScoreNoCritical
 	}
 
 	rating := RatingFromScore(score, c.greenThreshold, c.yellowThreshold)
