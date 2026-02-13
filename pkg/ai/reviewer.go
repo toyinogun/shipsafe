@@ -109,9 +109,14 @@ func (r *Reviewer) Review(ctx context.Context, diff *interfaces.Diff, opts *inte
 		allFindings = append(allFindings, findings...)
 	}
 
+	deduped := deduplicateFindings(allFindings)
+	if removed := len(allFindings) - len(deduped); removed > 0 {
+		slog.Info("deduplicated AI findings", "before", len(allFindings), "after", len(deduped), "removed", removed)
+	}
+
 	return &interfaces.AnalysisResult{
 		AnalyzerName: "ai-reviewer",
-		Findings:     allFindings,
+		Findings:     deduped,
 		Duration:     time.Since(start),
 	}, nil
 }
@@ -227,4 +232,184 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// deduplicateFindings removes duplicate findings that were independently found
+// by multiple review passes. Two findings are considered duplicates if they
+// reference the same file, their line numbers are within 3 lines, and their
+// descriptions refer to the same issue. When duplicates are found, the finding
+// with higher severity is kept. If severities are equal, the earlier finding
+// (from the earlier pass) is kept.
+func deduplicateFindings(findings []interfaces.Finding) []interfaces.Finding {
+	if len(findings) <= 1 {
+		return findings
+	}
+
+	// Track which findings have been marked as duplicates.
+	removed := make([]bool, len(findings))
+
+	for i := 0; i < len(findings); i++ {
+		if removed[i] {
+			continue
+		}
+		for j := i + 1; j < len(findings); j++ {
+			if removed[j] {
+				continue
+			}
+			if !isDuplicate(findings[i], findings[j]) {
+				continue
+			}
+			// Keep the one with higher severity; if equal, keep earlier (i).
+			if severityRank(findings[j].Severity) > severityRank(findings[i].Severity) {
+				removed[i] = true
+				break // i is removed, no need to compare it further.
+			}
+			removed[j] = true
+		}
+	}
+
+	result := make([]interfaces.Finding, 0, len(findings))
+	for i, f := range findings {
+		if !removed[i] {
+			result = append(result, f)
+		}
+	}
+	return result
+}
+
+// isDuplicate returns true if two findings refer to the same issue.
+func isDuplicate(a, b interfaces.Finding) bool {
+	if a.File != b.File {
+		return false
+	}
+
+	lineDist := a.StartLine - b.StartLine
+	if lineDist < 0 {
+		lineDist = -lineDist
+	}
+	if lineDist > 3 {
+		return false
+	}
+
+	return descriptionsSimilar(a.Description, b.Description)
+}
+
+// descriptionsSimilar returns true if two descriptions refer to the same issue.
+// It uses two heuristics:
+//  1. The first 4 significant words of both descriptions match exactly.
+//  2. At least 3 of the first 4 significant words of one description appear
+//     anywhere in the other description's significant words.
+func descriptionsSimilar(a, b string) bool {
+	wordsA := significantWords(a)
+	wordsB := significantWords(b)
+
+	if len(wordsA) == 0 || len(wordsB) == 0 {
+		return false
+	}
+
+	// Check if first N significant words match exactly.
+	n := 4
+	if len(wordsA) < n {
+		n = len(wordsA)
+	}
+	if len(wordsB) < n {
+		n = len(wordsB)
+	}
+	if n > 0 {
+		match := true
+		for i := 0; i < n; i++ {
+			if wordsA[i] != wordsB[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+
+	// Check if the key words of one appear in the other's word set.
+	if keyWordsOverlap(wordsA, wordsB) || keyWordsOverlap(wordsB, wordsA) {
+		return true
+	}
+
+	return false
+}
+
+// keyWordsOverlap returns true if at least 3 of the first 4 significant words
+// of src appear anywhere in dst.
+func keyWordsOverlap(src, dst []string) bool {
+	n := 4
+	if len(src) < n {
+		n = len(src)
+	}
+	if n < 3 {
+		return false
+	}
+
+	dstSet := make(map[string]bool, len(dst))
+	for _, w := range dst {
+		dstSet[w] = true
+	}
+
+	matches := 0
+	for i := 0; i < n; i++ {
+		if dstSet[src[i]] {
+			matches++
+		}
+	}
+	return matches >= 3
+}
+
+// significantWords extracts lowercase words from a string, filtering out
+// common stop words that don't contribute to meaning.
+func significantWords(s string) []string {
+	words := strings.Fields(strings.ToLower(s))
+	result := make([]string, 0, len(words))
+	for _, w := range words {
+		// Strip common punctuation from edges.
+		w = strings.Trim(w, ".,;:!?\"'()[]{}")
+		if w == "" {
+			continue
+		}
+		if stopWords[w] {
+			continue
+		}
+		result = append(result, w)
+	}
+	return result
+}
+
+var stopWords = map[string]bool{
+	"a": true, "an": true, "the": true, "is": true, "are": true,
+	"was": true, "were": true, "be": true, "been": true, "being": true,
+	"have": true, "has": true, "had": true, "do": true, "does": true,
+	"did": true, "will": true, "would": true, "could": true, "should": true,
+	"may": true, "might": true, "shall": true, "can": true,
+	"in": true, "on": true, "at": true, "to": true, "for": true,
+	"of": true, "with": true, "by": true, "from": true, "as": true,
+	"into": true, "through": true, "during": true, "before": true, "after": true,
+	"and": true, "but": true, "or": true, "nor": true, "not": true,
+	"so": true, "yet": true, "both": true, "either": true, "neither": true,
+	"this": true, "that": true, "these": true, "those": true,
+	"it": true, "its": true, "he": true, "she": true, "they": true,
+	"we": true, "you": true, "i": true, "me": true,
+}
+
+// severityRank returns a numeric rank for severity (higher = more severe).
+func severityRank(s interfaces.Severity) int {
+	switch s {
+	case interfaces.SeverityCritical:
+		return 5
+	case interfaces.SeverityHigh:
+		return 4
+	case interfaces.SeverityMedium:
+		return 3
+	case interfaces.SeverityLow:
+		return 2
+	case interfaces.SeverityInfo:
+		return 1
+	default:
+		return 0
+	}
 }

@@ -504,3 +504,265 @@ func TestWithMaxTokenBudget(t *testing.T) {
 		t.Errorf("expected maxTokenBudget 8000, got %d", reviewer.maxTokenBudget)
 	}
 }
+
+func TestDeduplicateFindings_ExactDuplicateKeepsHigherSeverity(t *testing.T) {
+	findings := []interfaces.Finding{
+		{File: "main.go", StartLine: 10, Severity: interfaces.SeverityMedium, Description: "null pointer dereference on user.profile.email"},
+		{File: "main.go", StartLine: 10, Severity: interfaces.SeverityHigh, Description: "null pointer dereference on user.profile.email"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 finding after dedup, got %d", len(result))
+	}
+	if result[0].Severity != interfaces.SeverityHigh {
+		t.Errorf("expected high severity to be kept, got %q", result[0].Severity)
+	}
+}
+
+func TestDeduplicateFindings_NearbyLines(t *testing.T) {
+	findings := []interfaces.Finding{
+		{File: "auth.go", StartLine: 42, Severity: interfaces.SeverityHigh, Description: "missing return for else branch"},
+		{File: "auth.go", StartLine: 44, Severity: interfaces.SeverityMedium, Description: "missing return for else branch"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 finding after dedup (lines within 3), got %d", len(result))
+	}
+	if result[0].Severity != interfaces.SeverityHigh {
+		t.Errorf("expected high severity to be kept, got %q", result[0].Severity)
+	}
+}
+
+func TestDeduplicateFindings_LinesTooFarApart(t *testing.T) {
+	findings := []interfaces.Finding{
+		{File: "auth.go", StartLine: 10, Severity: interfaces.SeverityHigh, Description: "null pointer dereference on user object"},
+		{File: "auth.go", StartLine: 50, Severity: interfaces.SeverityHigh, Description: "null pointer dereference on user object"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 findings (different locations), got %d", len(result))
+	}
+}
+
+func TestDeduplicateFindings_DifferentFiles(t *testing.T) {
+	findings := []interfaces.Finding{
+		{File: "auth.go", StartLine: 10, Severity: interfaces.SeverityHigh, Description: "null pointer dereference on user"},
+		{File: "handler.go", StartLine: 10, Severity: interfaces.SeverityHigh, Description: "null pointer dereference on user"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 findings (different files), got %d", len(result))
+	}
+}
+
+func TestDeduplicateFindings_DifferentIssues(t *testing.T) {
+	findings := []interfaces.Finding{
+		{File: "main.go", StartLine: 10, Severity: interfaces.SeverityHigh, Description: "null pointer dereference on user.profile.email"},
+		{File: "main.go", StartLine: 11, Severity: interfaces.SeverityMedium, Description: "unused variable declared but never read"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 findings (different issues), got %d", len(result))
+	}
+}
+
+func TestDeduplicateFindings_SameSeverityKeepsEarlier(t *testing.T) {
+	findings := []interfaces.Finding{
+		{File: "main.go", StartLine: 10, Severity: interfaces.SeverityHigh, Description: "null pointer dereference on user.profile", Source: "semantic"},
+		{File: "main.go", StartLine: 10, Severity: interfaces.SeverityHigh, Description: "null pointer dereference on user.profile", Source: "logic"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 finding after dedup, got %d", len(result))
+	}
+	if result[0].Source != "semantic" {
+		t.Errorf("expected earlier (semantic) finding to be kept, got source %q", result[0].Source)
+	}
+}
+
+func TestDeduplicateFindings_SimilarDescriptionsContainsKeyPhrase(t *testing.T) {
+	findings := []interfaces.Finding{
+		{File: "main.go", StartLine: 10, Severity: interfaces.SeverityMedium, Description: "null pointer dereference on user.profile.email when accessing nested field"},
+		{File: "main.go", StartLine: 11, Severity: interfaces.SeverityHigh, Description: "Potential null pointer dereference on user.profile.email — add a nil check before accessing the field"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 finding after dedup (similar descriptions), got %d", len(result))
+	}
+	if result[0].Severity != interfaces.SeverityHigh {
+		t.Errorf("expected high severity to be kept, got %q", result[0].Severity)
+	}
+}
+
+func TestDeduplicateFindings_EmptyAndSingle(t *testing.T) {
+	// Empty input.
+	result := deduplicateFindings(nil)
+	if len(result) != 0 {
+		t.Errorf("expected 0 findings for nil input, got %d", len(result))
+	}
+
+	// Single finding.
+	single := []interfaces.Finding{
+		{File: "main.go", StartLine: 1, Severity: interfaces.SeverityLow, Description: "something"},
+	}
+	result = deduplicateFindings(single)
+	if len(result) != 1 {
+		t.Errorf("expected 1 finding for single input, got %d", len(result))
+	}
+}
+
+func TestDeduplicateFindings_RealisticScenario(t *testing.T) {
+	// Simulates the real bug: semantic and logic passes both find the same 4 issues.
+	findings := []interfaces.Finding{
+		// Semantic pass findings.
+		{File: "pkg/auth/handler.go", StartLine: 42, Severity: interfaces.SeverityMedium, Description: "null pointer dereference on user.profile.email when accessing without nil check"},
+		{File: "pkg/auth/handler.go", StartLine: 55, Severity: interfaces.SeverityMedium, Description: "missing return for else branch in validation function"},
+		{File: "pkg/api/router.go", StartLine: 20, Severity: interfaces.SeverityHigh, Description: "SQL injection risk in query parameter handling"},
+		{File: "pkg/api/router.go", StartLine: 88, Severity: interfaces.SeverityLow, Description: "unused error return value from database Close"},
+		// Logic pass findings — same issues, slightly different wording.
+		{File: "pkg/auth/handler.go", StartLine: 43, Severity: interfaces.SeverityHigh, Description: "null pointer dereference on user.profile.email — the user object may be nil after lookup"},
+		{File: "pkg/auth/handler.go", StartLine: 55, Severity: interfaces.SeverityMedium, Description: "missing return for else branch causes function to fall through"},
+		{File: "pkg/api/router.go", StartLine: 21, Severity: interfaces.SeverityHigh, Description: "SQL injection risk in query parameter — unsanitized input used in query"},
+		{File: "pkg/api/router.go", StartLine: 88, Severity: interfaces.SeverityMedium, Description: "unused error return value from database Close call"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 4 {
+		t.Fatalf("expected 4 unique findings from 8 duplicates, got %d", len(result))
+	}
+
+	// Verify the higher-severity versions were kept.
+	severityByFile := map[string]interfaces.Severity{}
+	for _, f := range result {
+		key := fmt.Sprintf("%s:%d", f.File, f.StartLine)
+		severityByFile[key] = f.Severity
+	}
+
+	// null pointer: semantic=medium, logic=high → should keep high at line 43.
+	if s, ok := severityByFile["pkg/auth/handler.go:43"]; !ok || s != interfaces.SeverityHigh {
+		// Also acceptable if the kept finding is at line 42 with high severity.
+		if s2, ok2 := severityByFile["pkg/auth/handler.go:42"]; !ok2 || s2 != interfaces.SeverityHigh {
+			t.Errorf("expected high severity null pointer finding to be kept")
+		}
+	}
+}
+
+func TestSignificantWords(t *testing.T) {
+	words := significantWords("The user object is nil after the database lookup")
+	expected := []string{"user", "object", "nil", "database", "lookup"}
+	if len(words) != len(expected) {
+		t.Fatalf("expected %d words, got %d: %v", len(expected), len(words), words)
+	}
+	for i, w := range expected {
+		if words[i] != w {
+			t.Errorf("word[%d] = %q, want %q", i, words[i], w)
+		}
+	}
+}
+
+func TestDescriptionsSimilar(t *testing.T) {
+	tests := []struct {
+		name     string
+		a, b     string
+		expected bool
+	}{
+		{
+			name:     "identical",
+			a:        "null pointer dereference on user.profile",
+			b:        "null pointer dereference on user.profile",
+			expected: true,
+		},
+		{
+			name:     "same key words different wording",
+			a:        "null pointer dereference on user.profile.email when accessing nested field",
+			b:        "potential null pointer dereference on user.profile.email — add nil check",
+			expected: true,
+		},
+		{
+			name:     "completely different",
+			a:        "null pointer dereference on user object",
+			b:        "unused variable declared but never read",
+			expected: false,
+		},
+		{
+			name:     "empty strings",
+			a:        "",
+			b:        "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := descriptionsSimilar(tt.a, tt.b)
+			if got != tt.expected {
+				t.Errorf("descriptionsSimilar(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSeverityRank(t *testing.T) {
+	if severityRank(interfaces.SeverityCritical) <= severityRank(interfaces.SeverityHigh) {
+		t.Error("critical should rank higher than high")
+	}
+	if severityRank(interfaces.SeverityHigh) <= severityRank(interfaces.SeverityMedium) {
+		t.Error("high should rank higher than medium")
+	}
+	if severityRank(interfaces.SeverityMedium) <= severityRank(interfaces.SeverityLow) {
+		t.Error("medium should rank higher than low")
+	}
+	if severityRank(interfaces.SeverityLow) <= severityRank(interfaces.SeverityInfo) {
+		t.Error("low should rank higher than info")
+	}
+}
+
+func TestReviewer_Review_DeduplicatesAcrossPasses(t *testing.T) {
+	provider := &mockProvider{
+		available: true,
+		responses: []string{
+			// Semantic pass — finds 2 issues.
+			`{"findings": [
+				{"file": "pkg/auth/handler.go", "line": 42, "severity": "medium", "title": "Nil pointer", "description": "null pointer dereference on user.profile.email"},
+				{"file": "pkg/auth/handler.go", "line": 55, "severity": "medium", "title": "Missing return", "description": "missing return for else branch"}
+			]}`,
+			// Logic pass — finds same 2 issues with different severity.
+			`{"findings": [
+				{"file": "pkg/auth/handler.go", "line": 43, "severity": "high", "title": "Nil deref", "description": "null pointer dereference on user.profile.email may cause panic"},
+				{"file": "pkg/auth/handler.go", "line": 55, "severity": "high", "title": "No return", "description": "missing return for else branch in validation"}
+			]}`,
+			// Convention pass — no findings.
+			`{"findings": []}`,
+		},
+	}
+
+	reviewer := NewReviewer(provider)
+	diff := &interfaces.Diff{
+		Files: []interfaces.FileDiff{
+			{Path: "pkg/auth/handler.go", Status: interfaces.FileModified, Language: "go"},
+		},
+	}
+
+	result, err := reviewer.Review(context.Background(), diff, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Findings) != 2 {
+		t.Fatalf("expected 2 deduplicated findings, got %d", len(result.Findings))
+	}
+
+	// Both should be high severity (kept from logic pass).
+	for _, f := range result.Findings {
+		if f.Severity != interfaces.SeverityHigh {
+			t.Errorf("expected high severity after dedup, got %q for %q", f.Severity, f.Description)
+		}
+	}
+}
