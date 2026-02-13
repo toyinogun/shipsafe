@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -31,8 +33,14 @@ jobs:
             -X github.com/toyinlola/shipsafe/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -o shipsafe .
 
-      - name: Dogfood — scan clean diff
-        run: ./shipsafe scan --diff tests/fixtures/diffs/clean.diff
-
-      - name: Dogfood — scan last commit
-        run: ./shipsafe scan --diff <(git diff HEAD~1) || true
+      - name: ShipSafe Verification
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITEA_SERVER_URL: ${{ github.server_url }}
+          SHIPSAFE_AI_API_KEY: ${{ secrets.SHIPSAFE_AI_API_KEY }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ./shipsafe ci
+          else
+            ./shipsafe scan --diff <(git diff HEAD~1)
+          fi
