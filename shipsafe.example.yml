@@ -1,0 +1,67 @@
+# ShipSafe Configuration
+# Place this file as .shipsafe.yml in your repository root.
+# See docs/user/CONFIGURATION.md for full reference.
+
+version: "1"
+
+# Trust score thresholds
+# Scores at or above 'green' → GREEN (safe to merge)
+# Scores between 'yellow' and 'green' → YELLOW (review recommended)
+# Scores below 'yellow' → RED (do not merge)
+thresholds:
+  green: 80
+  yellow: 50
+
+# Static analysis modules
+analyzers:
+  complexity:
+    enabled: true
+    threshold: 15          # Max cyclomatic complexity per function
+
+  coverage:
+    enabled: true
+    min_delta: 0           # Minimum test coverage change (0 = no decrease)
+
+  secrets:
+    enabled: true
+
+  imports:
+    enabled: true
+
+  patterns:
+    enabled: true
+
+# AI-powered review (optional — requires LLM provider)
+ai:
+  enabled: false
+  provider: "openai-compatible"    # openai-compatible | anthropic
+
+  # Self-hosted Ollama example:
+  # endpoint: "http://ollama:11434/v1"
+  # model: "codellama:13b"
+
+  # OpenRouter example:
+  # endpoint: "https://openrouter.ai/api/v1"
+  # model: "anthropic/claude-sonnet-4-20250514"
+
+  # API key: set via SHIPSAFE_AI_API_KEY environment variable
+  # NEVER put API keys in this file.
+
+# Security scanning
+security:
+  enabled: true
+  sbom: false              # Generate CycloneDX SBOM
+  compliance:
+    nis2: false
+    gdpr: false
+
+# CI integration settings
+ci:
+  fail_on: "red"           # red | yellow — exit non-zero when score hits this
+  comment: true            # Post analysis report as PR comment
+  comment_format: "markdown"
+
+# Output settings (CLI mode)
+output:
+  format: "terminal"       # terminal | json | markdown | html
+  verbose: false
