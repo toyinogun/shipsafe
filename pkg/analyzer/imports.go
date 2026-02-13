@@ -10,27 +10,43 @@ import (
 )
 
 // Dependency manifest filenames to watch for.
+// Derived/lock files (go.sum, package-lock.json, etc.) are excluded to avoid
+// duplicate noise when the primary manifest is also in the diff.
 var dependencyManifests = map[string]string{
-	"go.mod":            "Go",
-	"go.sum":            "Go",
-	"package.json":      "JavaScript/TypeScript",
+	"go.mod":           "Go",
+	"package.json":     "JavaScript/TypeScript",
 	"package-lock.json": "JavaScript/TypeScript",
-	"yarn.lock":         "JavaScript/TypeScript",
-	"pnpm-lock.yaml":    "JavaScript/TypeScript",
-	"requirements.txt":  "Python",
-	"Pipfile":           "Python",
-	"Pipfile.lock":      "Python",
-	"pyproject.toml":    "Python",
-	"poetry.lock":       "Python",
-	"Cargo.toml":        "Rust",
-	"Cargo.lock":        "Rust",
-	"pom.xml":           "Java",
-	"build.gradle":      "Java",
-	"build.gradle.kts":  "Kotlin",
-	"Gemfile":           "Ruby",
-	"Gemfile.lock":      "Ruby",
-	"composer.json":     "PHP",
-	"composer.lock":     "PHP",
+	"yarn.lock":        "JavaScript/TypeScript",
+	"pnpm-lock.yaml":   "JavaScript/TypeScript",
+	"requirements.txt": "Python",
+	"Pipfile":          "Python",
+	"Pipfile.lock":     "Python",
+	"pyproject.toml":   "Python",
+	"poetry.lock":      "Python",
+	"Cargo.toml":       "Rust",
+	"Cargo.lock":       "Rust",
+	"pom.xml":          "Java",
+	"build.gradle":     "Java",
+	"build.gradle.kts": "Kotlin",
+	"Gemfile":          "Ruby",
+	"Gemfile.lock":     "Ruby",
+	"composer.json":    "PHP",
+	"composer.lock":    "PHP",
+}
+
+// derivedManifests maps lock/derived files to their primary manifest.
+// A derived file is skipped when its primary manifest is also present in the diff.
+// go.sum is always skipped (it is purely derived from go.mod).
+var derivedManifests = map[string]string{
+	"go.sum":            "", // always skip
+	"package-lock.json": "package.json",
+	"yarn.lock":         "package.json",
+	"pnpm-lock.yaml":    "package.json",
+	"Pipfile.lock":      "Pipfile",
+	"poetry.lock":       "pyproject.toml",
+	"Cargo.lock":        "Cargo.toml",
+	"Gemfile.lock":      "Gemfile",
+	"composer.lock":     "composer.json",
 }
 
 // Patterns to detect new dependency additions in various manifest files.
@@ -93,6 +109,13 @@ func (im *ImportsAnalyzer) Analyze(ctx context.Context, diff *interfaces.Diff) (
 		AnalyzerName: im.Name(),
 	}
 
+	// Collect all basenames present in the diff so we can deduplicate
+	// derived manifests when their primary is also present.
+	presentFiles := make(map[string]bool)
+	for i := range diff.Files {
+		presentFiles[fileBaseName(diff.Files[i].Path)] = true
+	}
+
 	for i := range diff.Files {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
@@ -104,6 +127,12 @@ func (im *ImportsAnalyzer) Analyze(ctx context.Context, diff *interfaces.Diff) (
 		}
 
 		filename := fileBaseName(file.Path)
+
+		// Skip derived/lock files to avoid duplicate noise.
+		if im.shouldSkipDerived(filename, presentFiles) {
+			continue
+		}
+
 		lang, isManifest := dependencyManifests[filename]
 		if !isManifest {
 			continue
@@ -114,6 +143,21 @@ func (im *ImportsAnalyzer) Analyze(ctx context.Context, diff *interfaces.Diff) (
 	}
 
 	return result, nil
+}
+
+// shouldSkipDerived checks if a manifest file is a derived/lock file that
+// should be skipped. go.sum is always skipped; other lock files are skipped
+// when their primary manifest is also present in the diff.
+func (im *ImportsAnalyzer) shouldSkipDerived(filename string, presentFiles map[string]bool) bool {
+	primary, isDerived := derivedManifests[filename]
+	if !isDerived {
+		return false
+	}
+	// Empty primary means always skip (e.g., go.sum).
+	if primary == "" {
+		return true
+	}
+	return presentFiles[primary]
 }
 
 // analyzeManifest inspects a dependency manifest file for changes.

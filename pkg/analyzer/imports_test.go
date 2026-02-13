@@ -347,6 +347,130 @@ func TestImportsAnalyzer_MinorVersionBump_NotMajor(t *testing.T) {
 	}
 }
 
+func TestImportsAnalyzer_SkipsGoSum(t *testing.T) {
+	diff := &interfaces.Diff{
+		Files: []interfaces.FileDiff{
+			{
+				Path:   "go.sum",
+				Status: interfaces.FileModified,
+				Hunks: []interfaces.Hunk{
+					{
+						AddedLines: []interfaces.Line{
+							{Number: 5, Content: `github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=`},
+							{Number: 6, Content: `github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=`},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := NewImportsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected no findings for go.sum, got %d: %v", len(result.Findings), findingIDs(result.Findings))
+	}
+}
+
+func TestImportsAnalyzer_SkipsGoSum_EvenWithoutGoMod(t *testing.T) {
+	// go.sum should always be skipped, even if go.mod is not in the diff.
+	diff := &interfaces.Diff{
+		Files: []interfaces.FileDiff{
+			{
+				Path:   "go.sum",
+				Status: interfaces.FileModified,
+				Hunks: []interfaces.Hunk{
+					{
+						AddedLines: []interfaces.Line{
+							{Number: 5, Content: `github.com/new/dep v1.0.0 h1:abc123=`},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := NewImportsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("go.sum should always be skipped, got %d findings", len(result.Findings))
+	}
+}
+
+func TestImportsAnalyzer_SkipsPackageLockJSON_WhenPackageJSONPresent(t *testing.T) {
+	diff := &interfaces.Diff{
+		Files: []interfaces.FileDiff{
+			{
+				Path:   "package.json",
+				Status: interfaces.FileModified,
+				Hunks: []interfaces.Hunk{
+					{
+						AddedLines: []interfaces.Line{
+							{Number: 10, Content: `    "express": "^4.18.0"`},
+						},
+					},
+				},
+			},
+			{
+				Path:   "package-lock.json",
+				Status: interfaces.FileModified,
+				Hunks: []interfaces.Hunk{
+					{
+						AddedLines: []interfaces.Line{
+							{Number: 100, Content: `    "express": { "version": "4.18.0" }`},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := NewImportsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should only have findings from package.json, not package-lock.json.
+	for _, f := range result.Findings {
+		if f.File == "package-lock.json" {
+			t.Fatalf("package-lock.json should be skipped when package.json is present, got finding: %s", f.Title)
+		}
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("expected findings from package.json")
+	}
+}
+
+func TestImportsAnalyzer_ScansPackageLockJSON_WhenPackageJSONAbsent(t *testing.T) {
+	// If only package-lock.json changed (e.g., npm audit fix), it should be scanned.
+	diff := &interfaces.Diff{
+		Files: []interfaces.FileDiff{
+			{
+				Path:   "package-lock.json",
+				Status: interfaces.FileModified,
+				Hunks: []interfaces.Hunk{
+					{
+						AddedLines: []interfaces.Line{
+							{Number: 100, Content: `    "lodash": "^4.17.21"`},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := NewImportsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("expected findings from package-lock.json when package.json is absent")
+	}
+}
+
 func TestImportsAnalyzer_SkipsBinaryFiles(t *testing.T) {
 	diff := &interfaces.Diff{
 		Files: []interfaces.FileDiff{

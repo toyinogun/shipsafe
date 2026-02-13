@@ -13,6 +13,7 @@ import (
 const (
 	defaultComplexityThreshold = 15
 	highComplexityThreshold    = 20
+	testFileThresholdBoost     = 10
 )
 
 // Decision-point patterns matched against added lines.
@@ -143,14 +144,22 @@ func (c *ComplexityAnalyzer) analyzeFile(file *interfaces.FileDiff) []interfaces
 		return nil
 	}
 
+	// Test files get a higher threshold — complex fixtures are intentional.
+	threshold := c.threshold
+	highThreshold := highComplexityThreshold
+	if isTestFile(file.Path) {
+		threshold += testFileThresholdBoost
+		highThreshold += testFileThresholdBoost
+	}
+
 	regions := extractFuncRegions(lines)
 
 	var findings []interfaces.Finding
 	for _, region := range regions {
 		complexity := countComplexity(region.lines)
-		if complexity > c.threshold {
+		if complexity > threshold {
 			severity := interfaces.SeverityMedium
-			if complexity > highComplexityThreshold {
+			if complexity > highThreshold {
 				severity = interfaces.SeverityHigh
 			}
 
@@ -164,14 +173,14 @@ func (c *ComplexityAnalyzer) analyzeFile(file *interfaces.FileDiff) []interfaces
 				Title:     fmt.Sprintf("High cyclomatic complexity in %s (%d)", region.name, complexity),
 				Description: fmt.Sprintf(
 					"Function %s has a cyclomatic complexity of %d (threshold: %d). Complex functions are harder to test and maintain.",
-					region.name, complexity, c.threshold,
+					region.name, complexity, threshold,
 				),
 				Suggestion: "Break the function into smaller, focused functions with single responsibilities.",
 				Source:     "complexity",
 				Confidence: 0.80,
 				Metadata: map[string]any{
 					"complexity": complexity,
-					"threshold":  c.threshold,
+					"threshold":  threshold,
 				},
 			})
 		}

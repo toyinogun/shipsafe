@@ -262,6 +262,129 @@ func TestPatternsAnalyzer_MultiplePatterns_SingleLine(t *testing.T) {
 	}
 }
 
+func TestPatternsAnalyzer_SkipsFixturePaths(t *testing.T) {
+	fixturePaths := []string{
+		"tests/fixtures/bad-pr/handler.go",
+		"tests/fixtures/vulnerable-pr/db.go",
+	}
+
+	for _, path := range fixturePaths {
+		t.Run(path, func(t *testing.T) {
+			diff := diffWithAddedLines(path,
+				`query := "SELECT * FROM users WHERE id=" + userID`,
+				`} catch (e) {}`,
+				`fmt.Println("debug")`,
+				`// TODO: fix this`,
+			)
+			result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Findings) != 0 {
+				t.Fatalf("expected no findings for fixture path %q, got %d: %v",
+					path, len(result.Findings), findingIDs(result.Findings))
+			}
+		})
+	}
+}
+
+func TestPatternsAnalyzer_SkipsDiffFiles(t *testing.T) {
+	diff := diffWithAddedLines("tests/fixtures/diffs/bad-code.diff",
+		`query := "SELECT * FROM users WHERE id=" + userID`,
+		`} catch (e) {}`,
+		`// TODO: fix later`,
+	)
+
+	result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected no findings for .diff file, got %d: %v",
+			len(result.Findings), findingIDs(result.Findings))
+	}
+}
+
+func TestPatternsAnalyzer_SQLConcat_SkippedInTestFiles(t *testing.T) {
+	testPaths := []string{
+		"pkg/db/db_test.go",
+		"src/db.test.js",
+		"tests/test_db.py",
+	}
+
+	for _, path := range testPaths {
+		t.Run(path, func(t *testing.T) {
+			diff := diffWithAddedLines(path,
+				`query := "SELECT * FROM users WHERE id=" + userID`,
+			)
+			result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if hasFindingWithID(result.Findings, "PAT-SQL-CONCAT") {
+				t.Fatalf("SQL concat in test file %q should not be flagged", path)
+			}
+		})
+	}
+}
+
+func TestPatternsAnalyzer_EmptyCatch_SkippedInTestFiles(t *testing.T) {
+	testPaths := []string{
+		"pkg/handler/handler_test.go",
+		"src/handler.test.ts",
+	}
+
+	for _, path := range testPaths {
+		t.Run(path, func(t *testing.T) {
+			diff := diffWithAddedLines(path,
+				`} catch (e) {}`,
+			)
+			result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if hasFindingWithID(result.Findings, "PAT-EMPTY-CATCH") {
+				t.Fatalf("empty catch in test file %q should not be flagged", path)
+			}
+		})
+	}
+}
+
+func TestPatternsAnalyzer_TODO_SkippedInTestFiles(t *testing.T) {
+	testPaths := []string{
+		"pkg/service/service_test.go",
+		"src/service.spec.ts",
+	}
+
+	for _, path := range testPaths {
+		t.Run(path, func(t *testing.T) {
+			diff := diffWithAddedLines(path,
+				`// TODO: add more test cases`,
+			)
+			result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if hasFindingWithID(result.Findings, "PAT-TODO") {
+				t.Fatalf("TODO in test file %q should not be flagged", path)
+			}
+		})
+	}
+}
+
+func TestPatternsAnalyzer_SQLConcat_StillDetectedInProductionCode(t *testing.T) {
+	diff := diffWithAddedLines("db/queries.go",
+		`query := "SELECT * FROM users WHERE id=" + userID`,
+	)
+	result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasFindingWithID(result.Findings, "PAT-SQL-CONCAT") {
+		t.Fatal("SQL concat in production code should still be flagged")
+	}
+}
+
 func TestPatternsAnalyzer_SkipsDeletedFiles(t *testing.T) {
 	diff := &interfaces.Diff{
 		Files: []interfaces.FileDiff{

@@ -81,6 +81,10 @@ func (p *PatternsAnalyzer) Analyze(ctx context.Context, diff *interfaces.Diff) (
 			continue
 		}
 
+		if isFixturePath(file.Path) {
+			continue
+		}
+
 		isTest := isTestFile(file.Path)
 
 		for j := range file.Hunks {
@@ -104,49 +108,53 @@ func (p *PatternsAnalyzer) scanLine(path string, line interfaces.Line, isTest bo
 	var findings []interfaces.Finding
 	content := line.Content
 
-	// Check SQL string concatenation.
-	for _, re := range sqlConcatPatterns {
-		if re.MatchString(content) {
-			findings = append(findings, interfaces.Finding{
-				ID:        fmt.Sprintf("PAT-SQL-CONCAT-%d", line.Number),
-				Category:  interfaces.CategoryPattern,
-				Severity:  interfaces.SeverityMedium,
-				File:      path,
-				StartLine: line.Number,
-				EndLine:   line.Number,
-				Title:     "SQL string concatenation detected",
-				Description: fmt.Sprintf(
-					"Line %d builds a SQL query via string concatenation, which is vulnerable to SQL injection.",
-					line.Number,
-				),
-				Suggestion: "Use parameterized queries or a query builder instead of string concatenation.",
-				Source:     "patterns",
-				Confidence: 0.80,
-			})
-			break // One finding per line for this category.
+	// Check SQL string concatenation (skip test files — tests intentionally contain bad patterns).
+	if !isTest {
+		for _, re := range sqlConcatPatterns {
+			if re.MatchString(content) {
+				findings = append(findings, interfaces.Finding{
+					ID:        fmt.Sprintf("PAT-SQL-CONCAT-%d", line.Number),
+					Category:  interfaces.CategoryPattern,
+					Severity:  interfaces.SeverityMedium,
+					File:      path,
+					StartLine: line.Number,
+					EndLine:   line.Number,
+					Title:     "SQL string concatenation detected",
+					Description: fmt.Sprintf(
+						"Line %d builds a SQL query via string concatenation, which is vulnerable to SQL injection.",
+						line.Number,
+					),
+					Suggestion: "Use parameterized queries or a query builder instead of string concatenation.",
+					Source:     "patterns",
+					Confidence: 0.80,
+				})
+				break // One finding per line for this category.
+			}
 		}
 	}
 
-	// Check empty catch/except blocks.
-	for _, re := range emptyCatchPatterns {
-		if re.MatchString(content) {
-			findings = append(findings, interfaces.Finding{
-				ID:        fmt.Sprintf("PAT-EMPTY-CATCH-%d", line.Number),
-				Category:  interfaces.CategoryPattern,
-				Severity:  interfaces.SeverityMedium,
-				File:      path,
-				StartLine: line.Number,
-				EndLine:   line.Number,
-				Title:     "Empty catch/except block",
-				Description: fmt.Sprintf(
-					"Line %d has an empty error handler. Swallowing errors silently hides bugs.",
-					line.Number,
-				),
-				Suggestion: "Log the error or handle it explicitly. If intentionally ignoring, add a comment explaining why.",
-				Source:     "patterns",
-				Confidence: 0.85,
-			})
-			break
+	// Check empty catch/except blocks (skip test files).
+	if !isTest {
+		for _, re := range emptyCatchPatterns {
+			if re.MatchString(content) {
+				findings = append(findings, interfaces.Finding{
+					ID:        fmt.Sprintf("PAT-EMPTY-CATCH-%d", line.Number),
+					Category:  interfaces.CategoryPattern,
+					Severity:  interfaces.SeverityMedium,
+					File:      path,
+					StartLine: line.Number,
+					EndLine:   line.Number,
+					Title:     "Empty catch/except block",
+					Description: fmt.Sprintf(
+						"Line %d has an empty error handler. Swallowing errors silently hides bugs.",
+						line.Number,
+					),
+					Suggestion: "Log the error or handle it explicitly. If intentionally ignoring, add a comment explaining why.",
+					Source:     "patterns",
+					Confidence: 0.85,
+				})
+				break
+			}
 		}
 	}
 
@@ -180,8 +188,8 @@ func (p *PatternsAnalyzer) scanLine(path string, line interfaces.Line, isTest bo
 		}
 	}
 
-	// Check TODO/FIXME/HACK comments.
-	if todoPattern.MatchString(content) {
+	// Check TODO/FIXME/HACK comments (skip test files — test TODOs are lower priority).
+	if !isTest && todoPattern.MatchString(content) {
 		matches := todoPattern.FindStringSubmatch(content)
 		tag := strings.ToUpper(matches[1])
 		findings = append(findings, interfaces.Finding{
@@ -212,6 +220,18 @@ func isTestFile(path string) bool {
 		if strings.Contains(lower, indicator) {
 			return true
 		}
+	}
+	return false
+}
+
+// isFixturePath checks if a file path is under tests/fixtures/ or is a .diff file.
+func isFixturePath(path string) bool {
+	lower := strings.ToLower(path)
+	if strings.Contains(lower, "tests/fixtures/") {
+		return true
+	}
+	if strings.HasSuffix(lower, ".diff") {
+		return true
 	}
 	return false
 }

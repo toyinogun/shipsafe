@@ -421,6 +421,84 @@ func TestSecretsAnalyzer_EmptyDiff(t *testing.T) {
 	}
 }
 
+func TestSecretsAnalyzer_SkipsGoSumFiles(t *testing.T) {
+	diff := diffWithAddedLines("go.sum",
+		`github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=`,
+		`github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected no findings for go.sum, got %d", len(result.Findings))
+	}
+}
+
+func TestSecretsAnalyzer_SkipsLockFiles(t *testing.T) {
+	lockFiles := []string{
+		"yarn.lock",
+		"Cargo.lock",
+		"Gemfile.lock",
+		"package-lock.json",
+	}
+
+	for _, path := range lockFiles {
+		t.Run(path, func(t *testing.T) {
+			diff := diffWithAddedLines(path,
+				`password = "SuperS3cretP@ssword!"`,
+			)
+			result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Findings) != 0 {
+				t.Fatalf("expected no findings for lock file %q, got %d", path, len(result.Findings))
+			}
+		})
+	}
+}
+
+func TestSecretsAnalyzer_SkipsDiffFiles(t *testing.T) {
+	diff := diffWithAddedLines("tests/fixtures/diffs/secrets-leak.diff",
+		`password = "SuperS3cretP@ssword!"`,
+		`aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYKZ6NR4TWAB`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected no findings for .diff file, got %d", len(result.Findings))
+	}
+}
+
+func TestSecretsAnalyzer_EntropySkipsChecksumLines(t *testing.T) {
+	checksumLines := []string{
+		`h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=`,
+		`sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824`,
+		`sha512:cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce`,
+		`sha1:a94a8fe5ccb19ba61c4c0873d391e987982fbbd3aabbccdd`,
+	}
+
+	for _, line := range checksumLines {
+		t.Run(line[:6], func(t *testing.T) {
+			diff := diffWithAddedLines("config.go", line)
+			result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, f := range result.Findings {
+				if f.Title == "High-entropy string detected" {
+					t.Fatalf("checksum line should not trigger entropy check: %q", line)
+				}
+			}
+		})
+	}
+}
+
 func TestSecretsAnalyzer_ImplementsInterface(t *testing.T) {
 	var _ Analyzer = NewSecretsAnalyzer()
 }

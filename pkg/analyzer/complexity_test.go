@@ -465,6 +465,166 @@ func TestExtractFuncName(t *testing.T) {
 	}
 }
 
+func TestComplexityAnalyzer_TestFile_HigherThreshold(t *testing.T) {
+	// Build a function with complexity ~18 (above default 15, below test threshold 25).
+	lines := []string{
+		`func TestProcessData_ComplexFixtures(t *testing.T) {`,
+		`    if len(input) == 0 {`,
+		`        return`,
+		`    }`,
+		`    for _, item := range input {`,
+		`        if item == "" {`,
+		`            continue`,
+		`        }`,
+		`        if strings.HasPrefix(item, "a") {`,
+		`            if len(item) > 5 {`,
+		`                for _, c := range item {`,
+		`                    if c == 'x' || c == 'y' {`,
+		`                        break`,
+		`                    }`,
+		`                }`,
+		`            }`,
+		`        } else if strings.HasPrefix(item, "b") {`,
+		`            switch item {`,
+		`            case "ba":`,
+		`            case "bb":`,
+		`            case "bc":`,
+		`            case "bd":`,
+		`            }`,
+		`        } else if item == "c" && len(item) > 0 {`,
+		`            if done {`,
+		`                break`,
+		`            }`,
+		`        }`,
+		`    }`,
+		`}`,
+	}
+
+	testPaths := []string{
+		"pkg/analyzer/secrets_test.go",
+		"src/utils.test.js",
+		"tests/test_handler.py",
+		"src/utils.spec.ts",
+	}
+
+	for _, path := range testPaths {
+		t.Run(path, func(t *testing.T) {
+			diff := diffWithAddedLines(path, lines...)
+			result, err := NewComplexityAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Findings) != 0 {
+				t.Fatalf("test file %q should have boosted threshold, got %d findings: %v",
+					path, len(result.Findings), result.Findings[0].Title)
+			}
+		})
+	}
+}
+
+func TestComplexityAnalyzer_TestFile_StillFlagsExtremeComplexity(t *testing.T) {
+	// Build a function with complexity well above the boosted threshold (25).
+	// Need > 25 decision points + base 1 = 26+ total.
+	lines := []string{
+		`func TestMega_ExtremeComplexity(t *testing.T) {`,
+		`    if x > 0 {`,
+		`        if x > 1 {`,
+		`            if x > 2 {`,
+		`                if x > 3 {`,
+		`                    if x > 4 {`,
+		`                        if x > 5 {`,
+		`                            if x > 6 {`,
+		`                                if x > 7 {`,
+		`                                    for i := 0; i < x; i++ {`,
+		`                                        if i%2 == 0 || i%3 == 0 {`,
+		`                                            switch i {`,
+		`                                            case 1:`,
+		`                                            case 2:`,
+		`                                            case 3:`,
+		`                                            case 4:`,
+		`                                            case 5:`,
+		`                                            }`,
+		`                                        }`,
+		`                                        while x > 0 && i < 100 {`,
+		`                                            if done || abort {`,
+		`                                            }`,
+		`                                        }`,
+		`                                        for j := 0; j < i; j++ {`,
+		`                                            if j > 0 && j < 50 {`,
+		`                                            }`,
+		`                                        }`,
+		`                                        if extra || flag {`,
+		`                                        }`,
+		`                                    }`,
+		`                                }`,
+		`                            }`,
+		`                        }`,
+		`                    }`,
+		`                }`,
+		`            }`,
+		`        }`,
+		`    }`,
+		`}`,
+	}
+
+	diff := diffWithAddedLines("mega_test.go", lines...)
+	result, err := NewComplexityAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("extremely complex test function should still be flagged")
+	}
+}
+
+func TestComplexityAnalyzer_NonTestFile_OriginalThreshold(t *testing.T) {
+	// Ensure non-test files still use the original threshold.
+	lines := []string{
+		`func processData(input []string) error {`,
+		`    if len(input) == 0 {`,
+		`        return nil`,
+		`    }`,
+		`    for _, item := range input {`,
+		`        if item == "" {`,
+		`            continue`,
+		`        }`,
+		`        if strings.HasPrefix(item, "a") {`,
+		`            if len(item) > 5 {`,
+		`                for _, c := range item {`,
+		`                    if c == 'x' || c == 'y' {`,
+		`                        break`,
+		`                    }`,
+		`                }`,
+		`            }`,
+		`        } else if strings.HasPrefix(item, "b") {`,
+		`            switch item {`,
+		`            case "ba":`,
+		`            case "bb":`,
+		`            case "bc":`,
+		`            case "bd":`,
+		`            }`,
+		`        } else if item == "c" && len(item) > 0 {`,
+		`            while true {`,
+		`                if done {`,
+		`                    break`,
+		`                }`,
+		`            }`,
+		`        }`,
+		`    }`,
+		`    return nil`,
+		`}`,
+	}
+
+	diff := diffWithAddedLines("processor.go", lines...)
+	result, err := NewComplexityAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("non-test file should use original threshold and flag this function")
+	}
+}
+
 func TestComplexityAnalyzer_MetadataIncluded(t *testing.T) {
 	// Use a low threshold to guarantee a finding for metadata inspection.
 	lines := []string{

@@ -104,6 +104,30 @@ var falsePositivePathSuffixes = []string{
 	"testdata/",
 	"fixtures/",
 	"__mocks__/",
+	".diff",
+	"go.sum",
+	".lock",
+	"package-lock.json",
+}
+
+// Prefixes indicating a line is a checksum, not a secret.
+var checksumPrefixes = []string{
+	"h1:",
+	"sha256:",
+	"sha512:",
+	"sha1:",
+	"sha384:",
+}
+
+// isChecksumLine reports whether the line looks like a checksum entry.
+func isChecksumLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	for _, prefix := range checksumPrefixes {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // SecretsAnalyzer detects hardcoded secrets, API keys, and credentials in diffs.
@@ -207,6 +231,10 @@ func (s *SecretsAnalyzer) scanLine(path string, line interfaces.Line) []interfac
 
 // checkEntropy looks for high-entropy tokens on a line that may be secrets.
 func (s *SecretsAnalyzer) checkEntropy(path string, line interfaces.Line) (interfaces.Finding, bool) {
+	if isChecksumLine(line.Content) {
+		return interfaces.Finding{}, false
+	}
+
 	tokens := extractTokens(line.Content)
 	for _, token := range tokens {
 		if len(token) < s.entropyMinLength {
