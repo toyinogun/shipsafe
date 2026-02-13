@@ -680,6 +680,134 @@ func TestSecretsAnalyzer_TextContentWithSpaces_NotFlagged(t *testing.T) {
 	}
 }
 
+func TestSecretsAnalyzer_URLsNotFlagged(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		line string
+	}{
+		{
+			"Google Cloud Storage image URL",
+			"components/Hero.tsx",
+			`<img src="https://lh3.googleusercontent.com/aida-public/AB6AXuBZr_MKrs57AIFO9xkPqZW2m3vT8nL1cD5eF7gH8iJ0kL2mN3oP4q" />`,
+		},
+		{
+			"googleapis.com URL",
+			"config.go",
+			`endpoint := "https://storage.googleapis.com/my-bucket/aB3kL9mN2pQ7rS4tU6vW8xY0z1cD5eF"`,
+		},
+		{
+			"cloudinary URL",
+			"components/Image.tsx",
+			`url="https://res.cloudinary.com/demo/image/upload/v1312461204/sample_aB3kL9mN2pQ7rS4t.jpg"`,
+		},
+		{
+			"imgix URL",
+			"components/Gallery.tsx",
+			`src="https://assets.imgix.net/examples/bluehat_aB3kL9mN2pQ7rS4tU6vW8xY0z.jpg"`,
+		},
+		{
+			"unsplash URL",
+			"components/Background.tsx",
+			`backgroundImage="https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1920&q=80"`,
+		},
+		{
+			"cloudfront CDN URL",
+			"components/Video.tsx",
+			`src="https://d1234abcdef8.cloudfront.net/videos/aB3kL9mN2pQ7rS4tU6vW8xY0z1cD5eF.mp4"`,
+		},
+		{
+			"amazonaws public URL",
+			"config.go",
+			`logo := "https://my-bucket.s3.amazonaws.com/public/aB3kL9mN2pQ7rS4tU6vW8xY0z1cD5eF.png"`,
+		},
+		{
+			"githubusercontent URL",
+			"README.md",
+			`avatar := "https://avatars.githubusercontent.com/u/aB3kL9mN2pQ7rS4tU6vW8xY0z1cD5eF"`,
+		},
+		{
+			"generic HTTPS URL with high-entropy path",
+			"main.go",
+			`url := "https://cdn.example.com/assets/aB3kL9mN2pQ7rS4tU6vW8xY0z1cD5eF"`,
+		},
+		{
+			"HTTP URL with high-entropy path",
+			"main.go",
+			`url := "http://internal.service.local/files/aB3kL9mN2pQ7rS4tU6vW8xY0z1cD5eF"`,
+		},
+		{
+			"URL with query parameters",
+			"components/Image.tsx",
+			`src="https://images.example.com/photo-aB3kL9mN2pQ7rS4tU6vW8xY0z?token=abc123&size=large"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diff := diffWithAddedLines(tt.path, tt.line)
+			result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, f := range result.Findings {
+				if f.Title == "High-entropy string detected" {
+					t.Fatalf("URL should not trigger entropy check: %q", tt.line)
+				}
+			}
+		})
+	}
+}
+
+func TestSecretsAnalyzer_DatabaseURLs_StillFlagged(t *testing.T) {
+	// Database connection strings with credentials should still be caught
+	// by the regex pattern matcher, even though they contain "://".
+	tests := []struct {
+		name string
+		line string
+	}{
+		{"postgres", `dsn := "postgres://admin:s3cretpass@db.internal.io:5432/production"`},
+		{"mysql", `dsn := "mysql://root:p@ssw0rd123@localhost/mydb"`},
+		{"mongodb", `uri := "mongodb://admin:s3cretval@cluster.internal.io/db"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diff := diffWithAddedLines("db.go", tt.line)
+			result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Findings) == 0 {
+				t.Fatalf("database connection string should still be caught by pattern: %q", tt.line)
+			}
+		})
+	}
+}
+
+func TestIsURLToken(t *testing.T) {
+	tests := []struct {
+		token string
+		want  bool
+	}{
+		{"https://lh3.googleusercontent.com/aida-public/AB6AXuBZr_MKrs57AIFO", true},
+		{"http://internal.service.local/files/abc123", true},
+		{"https://cdn.example.com/path", true},
+		{"aB3kL9mN2pQ7rS4tU6vW8xY0z1cD5eF", false},
+		{"AKIAIOSFODNN7WKRB3PQ", false},
+		{"ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef1234", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.token[:20], func(t *testing.T) {
+			got := isURLToken(tt.token)
+			if got != tt.want {
+				t.Errorf("isURLToken(%q) = %v, want %v", tt.token, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSecretsAnalyzer_RealSecretInTSX_StillFlagged(t *testing.T) {
 	// A real AWS key should still be detected in .tsx files.
 	diff := diffWithAddedLines("components/Config.tsx",

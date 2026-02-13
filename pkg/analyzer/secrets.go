@@ -133,6 +133,12 @@ var frontendStylingPatterns = []*regexp.Regexp{
 // jsxAttributeValueRe matches HTML/JSX attribute="long-string-here" patterns.
 var jsxAttributeValueRe = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9-]*\s*=\s*["'][^"']{20,}["']`)
 
+// urlSchemeRe matches tokens that contain a URL scheme (http:// or https://).
+var urlSchemeRe = regexp.MustCompile(`https?://`)
+
+// urlInLineRe extracts full URLs from a line for substring matching.
+var urlInLineRe = regexp.MustCompile(`https?://[^\s"'` + "`" + `]+`)
+
 // isFrontendFile reports whether the file is a frontend file (.tsx, .jsx).
 func isFrontendFile(path string) bool {
 	lower := strings.ToLower(path)
@@ -158,6 +164,27 @@ func isFrontendStylingLine(line string) bool {
 // is inside an HTML/JSX attribute value (e.g., data-id="long-string-here").
 func isJSXAttributeValue(line string) bool {
 	return jsxAttributeValueRe.MatchString(line)
+}
+
+// isURLToken reports whether a token itself is a URL (contains a scheme).
+func isURLToken(token string) bool {
+	return urlSchemeRe.MatchString(token)
+}
+
+// isTokenPartOfURL reports whether a token is a URL or a substring of a URL
+// found in the line. URLs contain high-entropy path segments (image hashes,
+// resource IDs) that are not secrets — they're public references. The regex
+// pattern matcher already covers database connection strings and bearer tokens.
+func isTokenPartOfURL(line, token string) bool {
+	if isURLToken(token) {
+		return true
+	}
+	for _, u := range urlInLineRe.FindAllString(line, -1) {
+		if strings.Contains(u, token) {
+			return true
+		}
+	}
+	return false
 }
 
 // isChecksumLine reports whether the line looks like a checksum entry.
@@ -305,6 +332,11 @@ func (s *SecretsAnalyzer) checkEntropy(path string, line interfaces.Line) (inter
 		// Strings with 3+ spaces are text content (prose, descriptions,
 		// testimonials), not secrets. Real API keys/tokens never contain spaces.
 		if strings.Count(token, " ") >= 3 {
+			continue
+		}
+		// URLs are references, not secrets. Their path segments often have
+		// high entropy (image hashes, resource IDs) but are public.
+		if isTokenPartOfURL(line.Content, token) {
 			continue
 		}
 		entropy := shannonEntropy(token)
