@@ -1,0 +1,24 @@
+version: "1"
+
+thresholds:
+  green: 80
+  yellow: 50
+
+analyzers:
+  complexity:
+    enabled: true
+    threshold: 15
+  secrets:
+    enabled: true
+  coverage:
+    enabled: true
+  imports:
+    enabled: true
+  patterns:
+    enabled: true
+
+ai:
+  enabled: true
+  provider: "openai-compatible"
+  endpoint: "https://api.openai.com/v1"
+  model: "gpt-4o"
