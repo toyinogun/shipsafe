@@ -68,11 +68,9 @@
 
 ## Phase 3: CI/CD Integration
 
-### TODO
-- [ ] Test Agent: Integration test — full CI flow with mock VCS
-- [ ] Infra Agent: Dogfood — add ShipSafe to its own CI pipeline
-
 ### DONE
+- [x] Test Agent: Integration test — full CI flow with mock VCS (completed 2026-02-13)
+- [x] Infra Agent: Dogfood — add ShipSafe to its own CI pipeline (completed 2026-02-13)
 - [x] CLI Agent: Implement `cmd/ci.go` — auto-detect CI env, post comments, exit codes
 - [x] VCS Agent: Implement `pkg/vcs/forgejo.go` — Forgejo API (PR comments, status checks) with tests
 - [x] VCS Agent: Implement `pkg/vcs/github.go` — GitHub API (PR comments, status checks) with tests
