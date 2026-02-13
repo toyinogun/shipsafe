@@ -3,6 +3,7 @@ package cli
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -127,5 +128,11 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.AI.APIKeyEnv == "" {
 		cfg.AI.APIKeyEnv = "SHIPSAFE_AI_API_KEY"
+	}
+
+	// Auto-enable AI review when API key is present in environment.
+	if !cfg.AI.Enabled && os.Getenv(cfg.AI.APIKeyEnv) != "" {
+		cfg.AI.Enabled = true
+		slog.Info("AI review auto-enabled (API key detected)")
 	}
 }
