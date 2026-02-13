@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: |
+          go build -ldflags "-s -w \
+            -X github.com/toyinlola/shipsafe/cmd.Version=ci \
+            -X github.com/toyinlola/shipsafe/cmd.Commit=${{ github.sha }} \
+            -X github.com/toyinlola/shipsafe/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o shipsafe .
+
+      - name: Dogfood — scan clean diff
+        run: ./shipsafe scan --diff tests/fixtures/diffs/clean.diff

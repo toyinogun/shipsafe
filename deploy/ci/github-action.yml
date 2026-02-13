@@ -1,0 +1,39 @@
+name: "ShipSafe Code Verification"
+description: "Run ShipSafe AI code verification on pull requests"
+
+inputs:
+  version:
+    description: "ShipSafe version to download"
+    required: false
+    default: "latest"
+  config-path:
+    description: "Path to .shipsafe.yml config file"
+    required: false
+    default: ".shipsafe.yml"
+  fail-on:
+    description: "Trust score level that causes a failure (red or yellow)"
+    required: false
+    default: "red"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download ShipSafe
+      shell: bash
+      run: |
+        VERSION="${{ inputs.version }}"
+        if [ "$VERSION" = "latest" ]; then
+          DOWNLOAD_URL="https://github.com/toyinlola/shipsafe/releases/latest/download/shipsafe-linux-amd64"
+        else
+          DOWNLOAD_URL="https://github.com/toyinlola/shipsafe/releases/download/v${VERSION}/shipsafe-linux-amd64"
+        fi
+        curl -fsSL "$DOWNLOAD_URL" -o /usr/local/bin/shipsafe
+        chmod +x /usr/local/bin/shipsafe
+
+    - name: Run ShipSafe
+      shell: bash
+      env:
+        SHIPSAFE_CONFIG: ${{ inputs.config-path }}
+        SHIPSAFE_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        shipsafe ci --config "$SHIPSAFE_CONFIG" --fail-on "$SHIPSAFE_FAIL_ON"

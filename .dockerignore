@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+shipsafe
+*.exe
+
+# Deployment (not needed inside the image)
+deploy/
+.forgejo/
+
+# Documentation
+docs/
+*.md
+!go.sum
+
+# Tests fixtures (not needed at runtime)
+tests/
+
+# Config examples
+configs/
+shipsafe.example.yml
