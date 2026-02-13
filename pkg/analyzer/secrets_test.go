@@ -1,0 +1,488 @@
+package analyzer
+
+import (
+	"context"
+	"testing"
+
+	"github.com/toyinlola/shipsafe/pkg/interfaces"
+)
+
+// helper to build a Diff with a single file containing added lines.
+func diffWithAddedLines(path string, lines ...string) *interfaces.Diff {
+	added := make([]interfaces.Line, len(lines))
+	for i, l := range lines {
+		added[i] = interfaces.Line{Number: i + 1, Content: l}
+	}
+	return &interfaces.Diff{
+		Files: []interfaces.FileDiff{
+			{
+				Path:   path,
+				Status: interfaces.FileModified,
+				Hunks: []interfaces.Hunk{
+					{
+						NewStart:   1,
+						NewLines:   len(lines),
+						AddedLines: added,
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestSecretsAnalyzer_Name(t *testing.T) {
+	a := NewSecretsAnalyzer()
+	if a.Name() != "secrets" {
+		t.Errorf("expected name %q, got %q", "secrets", a.Name())
+	}
+}
+
+func TestSecretsAnalyzer_AWSAccessKey(t *testing.T) {
+	diff := diffWithAddedLines("config.go",
+		`awsKey := "AKIAIOSFODNN7WKRB3PQ"`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("expected at least one finding for AWS access key")
+	}
+	assertHasFindingWithTitle(t, result.Findings, "AWS Access Key ID")
+}
+
+func TestSecretsAnalyzer_AWSSecretKey(t *testing.T) {
+	diff := diffWithAddedLines("config.go",
+		`aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYKZ6NR4TWAB`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("expected at least one finding for AWS secret key")
+	}
+	assertHasSeverity(t, result.Findings, interfaces.SeverityCritical)
+}
+
+func TestSecretsAnalyzer_PrivateKey(t *testing.T) {
+	diff := diffWithAddedLines("deploy.sh",
+		`-----BEGIN RSA PRIVATE KEY-----`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("expected at least one finding for private key")
+	}
+	assertHasSeverity(t, result.Findings, interfaces.SeverityCritical)
+}
+
+func TestSecretsAnalyzer_SSHPrivateKey(t *testing.T) {
+	diff := diffWithAddedLines("id_rsa",
+		`-----BEGIN OPENSSH PRIVATE KEY-----`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("expected at least one finding for SSH private key")
+	}
+	assertHasFindingWithTitle(t, result.Findings, "RSA/SSH Private Key")
+}
+
+func TestSecretsAnalyzer_GenericAPIKey(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{"api_key equals", `api_key = "sk_live_1234567890abcdef"`},
+		{"apikey equals", `apikey="abcdef1234567890ghij"`},
+		{"api-key colon", `api-key: abcdefghijklmnopqrst`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diff := diffWithAddedLines("config.yaml", tt.line)
+			result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Findings) == 0 {
+				t.Fatalf("expected finding for %q", tt.line)
+			}
+		})
+	}
+}
+
+func TestSecretsAnalyzer_BearerToken(t *testing.T) {
+	diff := diffWithAddedLines("main.go",
+		`Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkw`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("expected at least one finding for bearer token")
+	}
+	assertHasFindingWithTitle(t, result.Findings, "Bearer Token")
+}
+
+func TestSecretsAnalyzer_ConnectionStrings(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{"postgres", `dsn := "postgres://user:pass@host:5432/dbname"`},
+		{"mysql", `dsn := "mysql://root:secret@localhost/mydb"`},
+		{"mongodb", `uri := "mongodb://admin:s3cretval@cluster.internal.io/db"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diff := diffWithAddedLines("db.go", tt.line)
+			result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Findings) == 0 {
+				t.Fatalf("expected finding for connection string: %s", tt.line)
+			}
+		})
+	}
+}
+
+func TestSecretsAnalyzer_PasswordAssignment(t *testing.T) {
+	diff := diffWithAddedLines("config.go",
+		`password = "SuperS3cretP@ssword!"`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("expected at least one finding for password")
+	}
+}
+
+func TestSecretsAnalyzer_GitHubToken(t *testing.T) {
+	diff := diffWithAddedLines("ci.go",
+		`token := "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef1234"`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("expected at least one finding for GitHub token")
+	}
+}
+
+func TestSecretsAnalyzer_NoFindingsOnCleanCode(t *testing.T) {
+	diff := diffWithAddedLines("main.go",
+		`func main() {`,
+		`    fmt.Println("hello world")`,
+		`    x := 42`,
+		`}`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected no findings, got %d: %+v", len(result.Findings), result.Findings)
+	}
+}
+
+func TestSecretsAnalyzer_SkipsRemovedLines(t *testing.T) {
+	diff := &interfaces.Diff{
+		Files: []interfaces.FileDiff{
+			{
+				Path:   "config.go",
+				Status: interfaces.FileModified,
+				Hunks: []interfaces.Hunk{
+					{
+						// Secret in removed lines only — should NOT flag.
+						RemovedLines: []interfaces.Line{
+							{Number: 1, Content: `password = "SuperS3cretP@ssword!"`},
+						},
+						AddedLines: []interfaces.Line{
+							{Number: 1, Content: `password = os.Getenv("DB_PASSWORD")`},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected no findings for removed lines, got %d", len(result.Findings))
+	}
+}
+
+func TestSecretsAnalyzer_SkipsDeletedFiles(t *testing.T) {
+	diff := &interfaces.Diff{
+		Files: []interfaces.FileDiff{
+			{
+				Path:   "old-config.go",
+				Status: interfaces.FileDeleted,
+				Hunks: []interfaces.Hunk{
+					{
+						AddedLines: []interfaces.Line{
+							{Number: 1, Content: `password = "secret123456"`},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected no findings for deleted files, got %d", len(result.Findings))
+	}
+}
+
+func TestSecretsAnalyzer_SkipsBinaryFiles(t *testing.T) {
+	diff := &interfaces.Diff{
+		Files: []interfaces.FileDiff{
+			{
+				Path:     "image.png",
+				Status:   interfaces.FileAdded,
+				IsBinary: true,
+				Hunks: []interfaces.Hunk{
+					{
+						AddedLines: []interfaces.Line{
+							{Number: 1, Content: `AKIAIOSFODNN7EXAMPLE`},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected no findings for binary files, got %d", len(result.Findings))
+	}
+}
+
+func TestSecretsAnalyzer_SkipsTestFixtures(t *testing.T) {
+	paths := []string{
+		"pkg/analyzer/secrets_test.go",
+		"tests/fixtures/secrets.go",
+		"testdata/config.yaml",
+		"config.example.yml",
+	}
+
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			diff := diffWithAddedLines(path,
+				`password = "SuperS3cretP@ssword!"`,
+			)
+			result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Findings) != 0 {
+				t.Fatalf("expected no findings for test fixture path %q, got %d", path, len(result.Findings))
+			}
+		})
+	}
+}
+
+func TestSecretsAnalyzer_FalsePositivePlaceholders(t *testing.T) {
+	lines := []string{
+		`api_key = "your-api-key-here-placeholder"`,
+		`password = "changeme"`,
+		`secret = "EXAMPLE_SECRET_KEY_VALUE_12345"`,
+		`token = "replace_me_with_real_token_value"`,
+		`dsn := "postgres://user:${DB_PASSWORD}@host/db"`,
+		`key := "{{.APIKey}}"`,
+		`api_key = "dummy_key_for_testing_only"`,
+	}
+
+	for _, line := range lines {
+		t.Run(line, func(t *testing.T) {
+			diff := diffWithAddedLines("config.go", line)
+			result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Findings) != 0 {
+				t.Fatalf("expected false positive to be skipped for %q, got %d findings", line, len(result.Findings))
+			}
+		})
+	}
+}
+
+func TestSecretsAnalyzer_HighEntropyString(t *testing.T) {
+	// A high-entropy random string that doesn't match known patterns.
+	diff := diffWithAddedLines("auth.go",
+		`verificationCode := "aB3$kL9mN2pQ7rS4tU6vW8xY0z1cD5eF"`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) == 0 {
+		t.Fatal("expected entropy finding for high-entropy string")
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Title == "High-entropy string detected" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected a high-entropy finding")
+	}
+}
+
+func TestSecretsAnalyzer_LowEntropyNotFlagged(t *testing.T) {
+	// A long but low-entropy string should NOT trigger.
+	diff := diffWithAddedLines("main.go",
+		`msg := "aaaaaaaaaaaaaaaaaaaaaaaaa"`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, f := range result.Findings {
+		if f.Title == "High-entropy string detected" {
+			t.Fatal("low-entropy string should not trigger entropy check")
+		}
+	}
+}
+
+func TestSecretsAnalyzer_ContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately.
+
+	diff := diffWithAddedLines("config.go",
+		`password = "SuperS3cretP@ssword!"`,
+	)
+
+	_, err := NewSecretsAnalyzer().Analyze(ctx, diff)
+	if err == nil {
+		t.Fatal("expected error on cancelled context")
+	}
+}
+
+func TestSecretsAnalyzer_MultipleFindings(t *testing.T) {
+	diff := diffWithAddedLines("config.go",
+		`aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYKZ6NR4TWAB`,
+		`password = "SuperS3cretP@ssword!"`,
+		`dsn := "postgres://admin:secret@db.internal.io:5432/production"`,
+	)
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) < 3 {
+		t.Fatalf("expected at least 3 findings, got %d", len(result.Findings))
+	}
+}
+
+func TestSecretsAnalyzer_EmptyDiff(t *testing.T) {
+	diff := &interfaces.Diff{}
+
+	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected no findings for empty diff, got %d", len(result.Findings))
+	}
+}
+
+func TestSecretsAnalyzer_ImplementsInterface(t *testing.T) {
+	var _ Analyzer = NewSecretsAnalyzer()
+}
+
+func TestShannonEntropy(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantLow float64
+		wantHi  float64
+	}{
+		{"empty string", "", 0, 0},
+		{"single char", "aaaa", 0, 0.01},
+		{"low entropy", "aabb", 0.9, 1.1},
+		{"high entropy", "aB3$kL9mN2pQ7rS4", 3.5, 5.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shannonEntropy(tt.input)
+			if got < tt.wantLow || got > tt.wantHi {
+				t.Errorf("shannonEntropy(%q) = %f, want between %f and %f", tt.input, got, tt.wantLow, tt.wantHi)
+			}
+		})
+	}
+}
+
+// --- test helpers ---
+
+func assertHasFindingWithTitle(t *testing.T, findings []interfaces.Finding, substr string) {
+	t.Helper()
+	for _, f := range findings {
+		if contains(f.Title, substr) {
+			return
+		}
+	}
+	titles := make([]string, len(findings))
+	for i, f := range findings {
+		titles[i] = f.Title
+	}
+	t.Errorf("no finding with title containing %q, got: %v", substr, titles)
+}
+
+func assertHasSeverity(t *testing.T, findings []interfaces.Finding, severity interfaces.Severity) {
+	t.Helper()
+	for _, f := range findings {
+		if f.Severity == severity {
+			return
+		}
+	}
+	t.Errorf("no finding with severity %q", severity)
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchString(s, substr)
+}
+
+func searchString(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
