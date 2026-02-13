@@ -1,0 +1,110 @@
+diff --git a/pkg/validator/email.go b/pkg/validator/email.go
+new file mode 100644
+index 0000000..a1b2c3d
+--- /dev/null
++++ b/pkg/validator/email.go
+@@ -0,0 +1,43 @@
++// Package validator provides input validation utilities.
++package validator
++
++import (
++	"errors"
++	"regexp"
++	"strings"
++)
++
++var (
++	// ErrEmptyEmail is returned when an empty email is provided.
++	ErrEmptyEmail = errors.New("validator: email must not be empty")
++
++	// ErrInvalidFormat is returned when the email format is invalid.
++	ErrInvalidFormat = errors.New("validator: invalid email format")
++
++	// ErrDomainTooLong is returned when the domain exceeds the max length.
++	ErrDomainTooLong = errors.New("validator: domain exceeds maximum length")
++)
++
++// maxDomainLength is the RFC 5321 maximum domain length.
++const maxDomainLength = 253
++
++// emailRegex validates the basic structure of an email address.
++var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
++
++// ValidateEmail checks if the given email address is valid.
++// It returns nil if the email is valid, or an appropriate error.
++func ValidateEmail(email string) error {
++	email = strings.TrimSpace(email)
++	if email == "" {
++		return ErrEmptyEmail
++	}
++
++	if !emailRegex.MatchString(email) {
++		return ErrInvalidFormat
++	}
++
++	parts := strings.SplitN(email, "@", 2)
++	if len(parts[1]) > maxDomainLength {
++		return ErrDomainTooLong
++	}
++
++	return nil
++}
+diff --git a/pkg/validator/email_test.go b/pkg/validator/email_test.go
+new file mode 100644
+index 0000000..d4e5f6a
+--- /dev/null
++++ b/pkg/validator/email_test.go
+@@ -0,0 +1,58 @@
++package validator
++
++import (
++	"testing"
++)
++
++func TestValidateEmail_ValidAddresses(t *testing.T) {
++	tests := []struct {
++		name  string
++		email string
++	}{
++		{"simple", "user@example.com"},
++		{"with plus", "user+tag@example.com"},
++		{"subdomain", "user@mail.example.com"},
++		{"numbers", "user123@example.com"},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if err := ValidateEmail(tt.email); err != nil {
++				t.Errorf("ValidateEmail(%q) = %v, want nil", tt.email, err)
++			}
++		})
++	}
++}
++
++func TestValidateEmail_InvalidAddresses(t *testing.T) {
++	tests := []struct {
++		name    string
++		email   string
++		wantErr error
++	}{
++		{"empty", "", ErrEmptyEmail},
++		{"whitespace only", "   ", ErrEmptyEmail},
++		{"no at sign", "userexample.com", ErrInvalidFormat},
++		{"no domain", "user@", ErrInvalidFormat},
++		{"no local part", "@example.com", ErrInvalidFormat},
++		{"double at", "user@@example.com", ErrInvalidFormat},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			err := ValidateEmail(tt.email)
++			if err == nil {
++				t.Errorf("ValidateEmail(%q) = nil, want error", tt.email)
++				return
++			}
++			if err != tt.wantErr {
++				t.Errorf("ValidateEmail(%q) = %v, want %v", tt.email, err, tt.wantErr)
++			}
++		})
++	}
++}

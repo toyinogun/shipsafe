@@ -1,0 +1,95 @@
+diff --git a/pkg/service/auth.go b/pkg/service/auth.go
+new file mode 100644
+index 0000000..e5f6a7b
+--- /dev/null
++++ b/pkg/service/auth.go
+@@ -0,0 +1,42 @@
++// Package service implements business logic services.
++package service
++
++import (
++	"crypto/rand"
++	"encoding/hex"
++	"errors"
++	"time"
++)
++
++// Session represents an authenticated user session.
++type Session struct {
++	ID        string
++	UserID    string
++	Token     string
++	ExpiresAt time.Time
++}
++
++// ErrSessionExpired is returned when a session has expired.
++var ErrSessionExpired = errors.New("service: session expired")
++
++// ErrInvalidToken is returned when the provided token is invalid.
++var ErrInvalidToken = errors.New("service: invalid token")
++
++// GenerateToken creates a cryptographically secure random token.
++func GenerateToken(length int) (string, error) {
++	if length <= 0 {
++		return "", errors.New("service: token length must be positive")
++	}
++
++	bytes := make([]byte, length)
++	if _, err := rand.Read(bytes); err != nil {
++		return "", err
++	}
++
++	return hex.EncodeToString(bytes), nil
++}
++
++// IsSessionValid checks if a session is still valid.
++func IsSessionValid(s *Session) bool {
++	if s == nil {
++		return false
++	}
++	return time.Now().Before(s.ExpiresAt)
++}
+diff --git a/pkg/service/user.go b/pkg/service/user.go
+new file mode 100644
+index 0000000..f8a9b0c
+--- /dev/null
++++ b/pkg/service/user.go
+@@ -0,0 +1,39 @@
++package service
++
++import (
++	"errors"
++	"strings"
++)
++
++// User represents a user in the system.
++type User struct {
++	ID       string
++	Username string
++	Email    string
++	Active   bool
++}
++
++// ErrUserNotFound is returned when a user cannot be found.
++var ErrUserNotFound = errors.New("service: user not found")
++
++// ErrInvalidUsername is returned when the username is invalid.
++var ErrInvalidUsername = errors.New("service: invalid username")
++
++// ValidateUsername checks if a username meets requirements.
++func ValidateUsername(username string) error {
++	username = strings.TrimSpace(username)
++	if username == "" {
++		return ErrInvalidUsername
++	}
++
++	if len(username) < 3 {
++		return errors.New("service: username must be at least 3 characters")
++	}
++
++	if len(username) > 64 {
++		return errors.New("service: username must not exceed 64 characters")
++	}
++
++	return nil
++}

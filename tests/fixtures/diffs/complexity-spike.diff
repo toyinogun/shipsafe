@@ -1,0 +1,205 @@
+diff --git a/pkg/processor/handler.go b/pkg/processor/handler.go
+new file mode 100644
+index 0000000..c3d4e5f
+--- /dev/null
++++ b/pkg/processor/handler.go
+@@ -0,0 +1,180 @@
++// Package processor handles request processing pipelines.
++package processor
++
++import (
++	"errors"
++	"log"
++)
++
++// Request represents an incoming processing request.
++type Request struct {
++	ID         string
++	Type       string
++	Priority   int
++	Items      []Item
++	MaxRetries int
++	Timeout    int
++	Debug      bool
++}
++
++// Item represents a single item to process.
++type Item struct {
++	Type     string
++	Priority int
++	Status   string
++	Count    int
++	Flag     bool
++	Active   bool
++	Legacy   bool
++	Value    int
++	Retries  int
++	Subs     []SubItem
++	Deps     []Dependency
++}
++
++// SubItem is a nested sub-item.
++type SubItem struct {
++	Valid bool
++	Value int
++	Kind  string
++}
++
++// Dependency tracks an item dependency.
++type Dependency struct {
++	Ready   bool
++	Name    string
++	Version int
++}
++
++// ProcessRequest handles the main request processing with multiple code paths.
++func ProcessRequest(r *Request) error {
++	if r == nil {
++		return errors.New("nil request")
++	}
++
++	if r.Timeout > 0 && r.MaxRetries > 0 {
++		log.Printf("processing with timeout=%d retries=%d", r.Timeout, r.MaxRetries)
++	}
++
++	for _, item := range r.Items {
++		if item.Type == "A" {
++			if item.Priority > 5 {
++				for _, sub := range item.Subs {
++					if sub.Valid {
++						if sub.Value > 100 {
++							log.Printf("high value sub-item: %d", sub.Value)
++						} else if sub.Value > 50 {
++							log.Printf("medium value sub-item: %d", sub.Value)
++						} else if sub.Value > 25 {
++							log.Printf("low value sub-item: %d", sub.Value)
++						}
++					}
++				}
++			}
++		} else if item.Type == "B" {
++			switch item.Status {
++			case "active":
++				if item.Count > 0 {
++					for _, dep := range item.Deps {
++						if dep.Ready {
++							log.Printf("dep %s ready", dep.Name)
++						}
++					}
++				}
++			case "pending":
++				if item.Count > 10 {
++					for _, dep := range item.Deps {
++						if dep.Ready && dep.Version > 1 {
++							log.Printf("dep %s v%d pending", dep.Name, dep.Version)
++						}
++					}
++				}
++			case "error":
++				if item.Retries < 3 {
++					log.Printf("retrying item, attempt %d", item.Retries)
++				}
++			}
++		} else if item.Type == "C" {
++			if item.Flag && item.Active {
++				log.Printf("active flagged item")
++			} else if item.Flag || item.Legacy {
++				log.Printf("legacy or flagged item")
++			}
++		}
++	}
++
++	return nil
++}
++
++// ValidateItems performs multi-layered validation on request items.
++func ValidateItems(items []Item) error {
++	if items == nil {
++		return errors.New("nil items")
++	}
++
++	for _, item := range items {
++		if item.Type == "" {
++			return errors.New("empty type")
++		}
++
++		if item.Priority < 0 {
++			return errors.New("negative priority")
++		}
++
++		if item.Type == "A" || item.Type == "B" {
++			if item.Count <= 0 {
++				return errors.New("invalid count")
++			}
++
++			for _, sub := range item.Subs {
++				if sub.Valid {
++					if sub.Value < 0 {
++						return errors.New("negative sub value")
++					}
++					if sub.Kind == "" {
++						return errors.New("empty sub kind")
++					}
++					switch sub.Kind {
++					case "numeric":
++						if sub.Value > 1000 {
++							return errors.New("numeric value too large")
++						}
++					case "text":
++						if sub.Value != 0 {
++							return errors.New("text sub should have zero value")
++						}
++					case "binary":
++						if sub.Value != 0 && sub.Value != 1 {
++							return errors.New("binary value must be 0 or 1")
++						}
++					}
++				}
++			}
++		} else if item.Type == "C" {
++			if item.Flag && !item.Active {
++				return errors.New("flagged items must be active")
++			}
++			for _, dep := range item.Deps {
++				if !dep.Ready {
++					if dep.Version < 1 {
++						return errors.New("invalid dep version")
++					}
++				}
++			}
++		}
++	}
++
++	return nil
++}
++
++// RouteByPriority routes items based on their priority and status.
++func RouteByPriority(items []Item, threshold int) (high []Item, low []Item) {
++	for _, item := range items {
++		if item.Priority >= threshold {
++			if item.Status == "active" {
++				if item.Flag || item.Active {
++					high = append(high, item)
++				} else if item.Legacy {
++					if item.Count > 0 {
++						high = append(high, item)
++					}
++				}
++			} else if item.Status == "pending" {
++				if item.Retries < 3 && item.Count > 0 {
++					high = append(high, item)
++				}
++			}
++		} else {
++			if item.Status == "error" {
++				if item.Retries >= 3 || item.Count <= 0 {
++					low = append(low, item)
++				}
++			} else if item.Status == "active" || item.Status == "pending" {
++				low = append(low, item)
++			}
++		}
++	}
++
++	return high, low
++}

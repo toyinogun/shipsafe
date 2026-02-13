@@ -1,0 +1,84 @@
+diff --git a/go.mod b/go.mod
+index a1b2c3d..d4e5f6a 100644
+--- a/go.mod
++++ b/go.mod
+@@ -3,6 +3,7 @@ module github.com/toyinlola/shipsafe
+ go 1.25.4
+
+ require (
++	github.com/google/uuid v1.6.0
+ 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+ 	github.com/spf13/cobra v1.10.2 // indirect
+ 	github.com/spf13/pflag v1.0.9 // indirect
+diff --git a/pkg/handler/api.go b/pkg/handler/api.go
+new file mode 100644
+index 0000000..c4d5e6f
+--- /dev/null
++++ b/pkg/handler/api.go
+@@ -0,0 +1,65 @@
++// Package handler implements HTTP request handlers.
++package handler
++
++import (
++	"encoding/json"
++	"fmt"
++	"net/http"
++)
++
++// Response wraps a standard API response.
++type Response struct {
++	Status  int         `json:"status"`
++	Message string      `json:"message"`
++	Data    interface{} `json:"data,omitempty"`
++}
++
++// HandleCreateUser processes user creation requests.
++func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
++	// TODO: add rate limiting before production release
++	if r.Method != http.MethodPost {
++		writeJSON(w, http.StatusMethodNotAllowed, "method not allowed")
++		return
++	}
++
++	var input struct {
++		Name  string `json:"name"`
++		Email string `json:"email"`
++		Role  string `json:"role"`
++	}
++
++	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
++		writeJSON(w, http.StatusBadRequest, "invalid request body")
++		return
++	}
++
++	fmt.Println("creating user:", input.Name, input.Email)
++
++	if input.Name == "" {
++		writeJSON(w, http.StatusBadRequest, "name is required")
++		return
++	}
++
++	if input.Email == "" {
++		writeJSON(w, http.StatusBadRequest, "email is required")
++		return
++	}
++
++	if input.Role != "admin" && input.Role != "user" && input.Role != "viewer" {
++		writeJSON(w, http.StatusBadRequest, "invalid role")
++		return
++	}
++
++	fmt.Println("user created successfully:", input.Name)
++
++	writeJSON(w, http.StatusCreated, "user created")
++}
++
++func writeJSON(w http.ResponseWriter, status int, message string) {
++	w.Header().Set("Content-Type", "application/json")
++	w.WriteHeader(status)
++	resp := Response{
++		Status:  status,
++		Message: message,
++	}
++	json.NewEncoder(w).Encode(resp)
++}
