@@ -373,8 +373,6 @@ Agents check `TASKBOARD.md` at the start of each session to understand current p
 **v0.3.0** — Phases 0-3 substantially complete. Full pipeline working: static analysis (5 analyzers), AI-powered review, trust scoring, CI integration with Forgejo and GitHub.
 
 Remaining gaps before Phase 4:
-- `pkg/vcs/gitlab.go` — GitLab VCS provider not yet implemented
-- `pkg/vcs/git.go` — Local git operations (diff from HEAD, branch comparison) not yet implemented
 - Dogfooding — ShipSafe not yet running in its own CI pipeline
 - `pkg/ai/providers/anthropic.go` — Anthropic provider not yet implemented
 

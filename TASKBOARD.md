@@ -69,8 +69,6 @@
 ## Phase 3: CI/CD Integration
 
 ### TODO
-- [ ] VCS Agent: Implement `pkg/vcs/gitlab.go` — GitLab API (MR comments, status checks)
-- [ ] VCS Agent: Implement `pkg/vcs/git.go` — local git operations (diff from HEAD, branch comparison)
 - [ ] Test Agent: Integration test — full CI flow with mock VCS
 - [ ] Infra Agent: Dogfood — add ShipSafe to its own CI pipeline
 
