@@ -108,7 +108,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     container:
-      image: repo.toyintest.org/teey/shipsafe:v0.3.0-alpha
+      image: ghcr.io/toyinogun/shipsafe:v0.3.0-alpha
     steps:
       - uses: actions/checkout@v4
         with:

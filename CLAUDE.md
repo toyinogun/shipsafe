@@ -15,7 +15,7 @@ ShipSafe is a self-hosted AI code verification gateway. It sits in CI/CD pipelin
 | Layer | Technology | Rationale |
 |-------|-----------|-----------|
 | CLI & Core | Go 1.23+ | Single binary, fast, native K8s ecosystem |
-| AI Analysis | Python 3.12+ | LLM libraries, AST parsing ecosystem |
+| AI Analysis | Go (OpenAI-compatible client) | LLM API integration via net/http |
 | API Framework | Go net/http + chi router | Lightweight, stdlib-aligned |
 | Frontend | React + TypeScript + Tailwind | Dashboard (Phase 4+) |
 | Database | PostgreSQL 16+ (CloudNativePG) | Persistent analysis history |
@@ -95,6 +95,9 @@ shipsafe/
 │   │
 │   └── server/                  # Server mode (Phase 4+)
 │
+├── web/                         # Frontend
+│   └── landing/                 # Landing page (React + Vite + Tailwind)
+│
 ├── tests/                       # Integration tests
 │   ├── fixtures/                # Test fixture diffs
 │   │   └── diffs/               # Sample unified diff files
@@ -110,7 +113,10 @@ shipsafe/
 │   ├── docker/
 │   │   └── Dockerfile           # Multi-stage build
 │   └── ci/
-│       └── github-action.yml    # GitHub Actions workflow
+│       ├── github-action.yml    # GitHub Actions workflow
+│       ├── forgejo-workflow.yml  # Forgejo binary-based workflow template
+│       ├── forgejo-workflow-container.yml  # Forgejo container-based workflow template
+│       └── install.sh           # ShipSafe install script
 │
 └── .forgejo/
     └── workflows/
