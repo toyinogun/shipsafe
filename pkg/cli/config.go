@@ -135,4 +135,11 @@ func applyDefaults(cfg *Config) {
 		cfg.AI.Enabled = true
 		slog.Info("AI review auto-enabled (API key detected)")
 	}
+
+	if cfg.AI.Endpoint == "" {
+		cfg.AI.Endpoint = "https://api.openai.com/v1"
+	}
+	if cfg.AI.Model == "" {
+		cfg.AI.Model = "gpt-4o-mini"
+	}
 }
