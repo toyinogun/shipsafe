@@ -9,6 +9,8 @@ import (
 	"os/exec"
 
 	"github.com/spf13/cobra"
+	"github.com/toyinlola/shipsafe/pkg/ai"
+	"github.com/toyinlola/shipsafe/pkg/ai/providers"
 	"github.com/toyinlola/shipsafe/pkg/analyzer"
 	"github.com/toyinlola/shipsafe/pkg/cli"
 	"github.com/toyinlola/shipsafe/pkg/interfaces"
@@ -94,17 +96,22 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("scan: running analysis: %w", err)
 	}
 
-	// 5. Calculate trust score.
+	// 5. Run AI review if enabled.
+	if aiResult := runAIReview(ctx, cfg, diff); aiResult != nil {
+		results = append(results, aiResult)
+	}
+
+	// 6. Calculate trust score.
 	calc := scorer.NewCalculator(
 		scorer.WithThresholds(cfg.Thresholds.Green, cfg.Thresholds.Yellow),
 	)
 	trustScore := calc.Score(results)
 
-	// 6. Generate report.
+	// 7. Generate report.
 	gen := report.NewGenerator()
 	rpt := gen.Generate(results, trustScore, diff)
 
-	// 7. Select formatter and write output.
+	// 8. Select formatter and write output.
 	f := selectFormatter(format)
 
 	var w io.Writer = os.Stdout
@@ -121,7 +128,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("scan: writing report: %w", err)
 	}
 
-	// 8. Exit with code 1 for RED rating.
+	// 9. Exit with code 1 for RED rating.
 	if trustScore.Rating == interfaces.RatingRed {
 		os.Exit(1)
 	}
@@ -165,6 +172,56 @@ func registerAnalyzers(registry *analyzer.Registry, cfg *cli.Config) {
 	if cfg.Analyzers.Imports.IsEnabled() {
 		_ = registry.Register(analyzer.NewImportsAnalyzer())
 	}
+}
+
+// runAIReview creates an AI reviewer from config and runs it against the diff.
+// Returns nil if AI review is disabled, unavailable, or fails.
+func runAIReview(ctx context.Context, cfg *cli.Config, diff *interfaces.Diff) *interfaces.AnalysisResult {
+	if !cfg.AI.Enabled {
+		slog.Debug("AI review disabled, skipping")
+		return nil
+	}
+
+	if cfg.AI.Endpoint == "" || cfg.AI.Model == "" {
+		slog.Warn("AI review enabled but endpoint or model not configured, skipping")
+		return nil
+	}
+
+	apiKey := os.Getenv(cfg.AI.APIKeyEnv)
+
+	providerCfg := ai.ProviderConfig{
+		Endpoint: cfg.AI.Endpoint,
+		Model:    cfg.AI.Model,
+		APIKey:   apiKey,
+		Type:     ai.ProviderType(cfg.AI.Provider),
+	}
+
+	var provider ai.LLMProvider
+	switch ai.ProviderType(cfg.AI.Provider) {
+	case ai.ProviderOpenAICompatible, "":
+		provider = providers.NewOpenAIProvider(providerCfg, 0)
+	default:
+		slog.Warn("AI review: unsupported provider, skipping", "provider", cfg.AI.Provider)
+		return nil
+	}
+
+	reviewer := ai.NewReviewer(provider)
+
+	if !reviewer.Available(ctx) {
+		slog.Warn("AI review: LLM endpoint unreachable, skipping", "endpoint", cfg.AI.Endpoint)
+		return nil
+	}
+
+	slog.Info("running AI review", "endpoint", cfg.AI.Endpoint, "model", cfg.AI.Model)
+
+	result, err := reviewer.Review(ctx, diff, nil)
+	if err != nil {
+		slog.Error("AI review failed", "error", err)
+		return nil
+	}
+
+	slog.Info("AI review complete", "findings", len(result.Findings), "duration", result.Duration)
+	return result
 }
 
 // selectFormatter returns the appropriate report formatter for the given format name.

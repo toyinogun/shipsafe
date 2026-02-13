@@ -13,8 +13,18 @@ type Config struct {
 	Version    string          `yaml:"version"`
 	Thresholds ThresholdConfig `yaml:"thresholds"`
 	Analyzers  AnalyzersConfig `yaml:"analyzers"`
+	AI         AIConfig        `yaml:"ai"`
 	Output     OutputConfig    `yaml:"output"`
 	CI         CIConfig        `yaml:"ci"`
+}
+
+// AIConfig holds configuration for the AI-powered code review module.
+type AIConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	Endpoint  string `yaml:"endpoint"`
+	Model     string `yaml:"model"`
+	APIKeyEnv string `yaml:"api_key_env"`
 }
 
 // ThresholdConfig holds the trust score thresholds.
@@ -114,5 +124,8 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.CI.CommentFormat == "" {
 		cfg.CI.CommentFormat = "markdown"
+	}
+	if cfg.AI.APIKeyEnv == "" {
+		cfg.AI.APIKeyEnv = "SHIPSAFE_AI_API_KEY"
 	}
 }
