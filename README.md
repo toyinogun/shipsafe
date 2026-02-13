@@ -64,13 +64,22 @@ ai:
 
 See `shipsafe.example.yml` for full configuration reference.
 
+## Local Install
+
+```bash
+curl -fsSL -L https://github.com/toyinogun/shipsafe/releases/download/v0.3.0-alpha/shipsafe-linux-amd64 -o /usr/local/bin/shipsafe
+chmod +x /usr/local/bin/shipsafe
+shipsafe scan --diff <(git diff main)
+```
+
 ## CI Integration
 
-Add to your repo's `.forgejo/workflows/shipsafe.yml`:
+### GitHub Actions
+
+Add `.github/workflows/shipsafe.yml` to your repo:
 
 ```yaml
 name: ShipSafe Code Verification
-
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -85,21 +94,22 @@ jobs:
 
       - name: Install ShipSafe
         run: |
-          curl -fsSL https://github.com/toyinogun/shipsafe/releases/download/v0.3.0-alpha/shipsafe-linux-amd64 -o /usr/local/bin/shipsafe
+          curl -fsSL -L https://github.com/toyinogun/shipsafe/releases/download/v0.3.0-alpha/shipsafe-linux-amd64 -o /usr/local/bin/shipsafe
           chmod +x /usr/local/bin/shipsafe
 
-      - name: Run ShipSafe CI
+      - name: Run ShipSafe
         env:
-          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHIPSAFE_AI_API_KEY: ${{ secrets.SHIPSAFE_AI_API_KEY }}
         run: shipsafe ci
 ```
 
-### Using container instead
+### Forgejo Actions
+
+Add `.forgejo/workflows/shipsafe.yml` to your repo:
 
 ```yaml
 name: ShipSafe Code Verification
-
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -107,24 +117,38 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/toyinogun/shipsafe:v0.3.0-alpha
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Run ShipSafe CI
+      - name: Install ShipSafe
+        run: |
+          curl -fsSL -L https://github.com/toyinogun/shipsafe/releases/download/v0.3.0-alpha/shipsafe-linux-amd64 -o /usr/local/bin/shipsafe
+          chmod +x /usr/local/bin/shipsafe
+
+      - name: Run ShipSafe
         env:
           FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GITEA_SERVER_URL: ${{ github.server_url }}
           SHIPSAFE_AI_API_KEY: ${{ secrets.SHIPSAFE_AI_API_KEY }}
         run: shipsafe ci
 ```
 
-### Required secrets
+### Required Secrets
 
-- `FORGEJO_TOKEN` — repo token with PR comment permissions
-- `SHIPSAFE_AI_API_KEY` — OpenAI-compatible API key (optional, for AI review)
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `GITHUB_TOKEN` | Auto (GitHub) | Automatic on GitHub Actions, used for PR comments and commit status |
+| `FORGEJO_TOKEN` | Yes (Forgejo) | Personal access token with `write:issue` scope |
+| `SHIPSAFE_AI_API_KEY` | Optional | OpenAI-compatible API key for AI review (3-pass analysis) |
+
+### What You Get
+
+- Trust score (0-100) on every PR
+- Commit status (green/red) for merge gating
+- AI-powered code review catching logic bugs, null pointer issues, and missing edge cases
+- Static analysis for secrets, complexity, test coverage, and bad patterns
 
 ## Architecture
 
