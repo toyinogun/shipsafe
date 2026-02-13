@@ -85,7 +85,7 @@ jobs:
 
       - name: Install ShipSafe
         run: |
-          curl -fsSL https://repo.toyintest.org/teey/shipsafe/releases/download/v0.3.0-alpha/shipsafe-linux-amd64 -o /usr/local/bin/shipsafe
+          curl -fsSL https://github.com/toyinogun/shipsafe/releases/download/v0.3.0-alpha/shipsafe-linux-amd64 -o /usr/local/bin/shipsafe
           chmod +x /usr/local/bin/shipsafe
 
       - name: Run ShipSafe CI

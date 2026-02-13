@@ -11,7 +11,7 @@ case "$ARCH" in
 esac
 
 BINARY="shipsafe-${OS}-${ARCH}"
-BASE_URL="https://repo.toyintest.org/teey/shipsafe/releases/download/${VERSION}"
+BASE_URL="https://github.com/toyinogun/shipsafe/releases/download/${VERSION}"
 
 echo "Installing ShipSafe ${VERSION} (${OS}/${ARCH})..."
 curl -fsSL "${BASE_URL}/${BINARY}" -o /usr/local/bin/shipsafe
