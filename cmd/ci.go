@@ -212,6 +212,9 @@ func runCI(cmd *cobra.Command, args []string) error {
 		results = append(results, aiResult)
 	}
 
+	// 6b. Deduplicate findings across static analyzers and AI review.
+	results = deduplicateCrossAnalyzer(results)
+
 	// 7. Calculate trust score.
 	calc := scorer.NewCalculator(
 		scorer.WithThresholds(cfg.Thresholds.Green, cfg.Thresholds.Yellow),

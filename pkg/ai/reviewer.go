@@ -234,12 +234,16 @@ func truncateStr(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+// LineProximityThreshold is the maximum line distance for two findings to be
+// considered duplicates of the same issue.
+const LineProximityThreshold = 6
+
 // deduplicateFindings removes duplicate findings that were independently found
 // by multiple review passes. Two findings are considered duplicates if they
-// reference the same file, their line numbers are within 3 lines, and their
-// descriptions refer to the same issue. When duplicates are found, the finding
-// with higher severity is kept. If severities are equal, the earlier finding
-// (from the earlier pass) is kept.
+// reference the same file, their line numbers are within LineProximityThreshold
+// lines, and their descriptions refer to the same issue. When duplicates are
+// found, the finding with higher severity is kept. If severities are equal, the
+// earlier finding (from the earlier pass) is kept.
 func deduplicateFindings(findings []interfaces.Finding) []interfaces.Finding {
 	if len(findings) <= 1 {
 		return findings
@@ -256,7 +260,7 @@ func deduplicateFindings(findings []interfaces.Finding) []interfaces.Finding {
 			if removed[j] {
 				continue
 			}
-			if !isDuplicate(findings[i], findings[j]) {
+			if !IsDuplicate(findings[i], findings[j]) {
 				continue
 			}
 			// Keep the one with higher severity; if equal, keep earlier (i).
@@ -277,8 +281,11 @@ func deduplicateFindings(findings []interfaces.Finding) []interfaces.Finding {
 	return result
 }
 
-// isDuplicate returns true if two findings refer to the same issue.
-func isDuplicate(a, b interfaces.Finding) bool {
+// IsDuplicate returns true if two findings refer to the same issue.
+// Two findings are duplicates if they reference the same file, their line
+// numbers are within LineProximityThreshold lines, and their descriptions
+// are similar.
+func IsDuplicate(a, b interfaces.Finding) bool {
 	if a.File != b.File {
 		return false
 	}
@@ -287,7 +294,7 @@ func isDuplicate(a, b interfaces.Finding) bool {
 	if lineDist < 0 {
 		lineDist = -lineDist
 	}
-	if lineDist > 3 {
+	if lineDist > LineProximityThreshold {
 		return false
 	}
 

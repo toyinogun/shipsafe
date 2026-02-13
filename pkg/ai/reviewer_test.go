@@ -528,10 +528,49 @@ func TestDeduplicateFindings_NearbyLines(t *testing.T) {
 
 	result := deduplicateFindings(findings)
 	if len(result) != 1 {
-		t.Fatalf("expected 1 finding after dedup (lines within 3), got %d", len(result))
+		t.Fatalf("expected 1 finding after dedup (lines within threshold), got %d", len(result))
 	}
 	if result[0].Severity != interfaces.SeverityHigh {
 		t.Errorf("expected high severity to be kept, got %q", result[0].Severity)
+	}
+}
+
+func TestDeduplicateFindings_Lines5ApartIsDuplicate(t *testing.T) {
+	findings := []interfaces.Finding{
+		{File: "auth.go", StartLine: 40, Severity: interfaces.SeverityMedium, Description: "missing nil check before accessing user field"},
+		{File: "auth.go", StartLine: 45, Severity: interfaces.SeverityHigh, Description: "missing nil check before accessing user field"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 finding after dedup (lines 5 apart, within threshold of %d), got %d", LineProximityThreshold, len(result))
+	}
+	if result[0].Severity != interfaces.SeverityHigh {
+		t.Errorf("expected high severity to be kept, got %q", result[0].Severity)
+	}
+}
+
+func TestDeduplicateFindings_Lines6ApartIsDuplicate(t *testing.T) {
+	findings := []interfaces.Finding{
+		{File: "auth.go", StartLine: 40, Severity: interfaces.SeverityMedium, Description: "hardcoded secret detected in configuration"},
+		{File: "auth.go", StartLine: 46, Severity: interfaces.SeverityHigh, Description: "hardcoded secret detected in configuration"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 finding after dedup (lines exactly %d apart), got %d", LineProximityThreshold, len(result))
+	}
+}
+
+func TestDeduplicateFindings_Lines7ApartNotDuplicate(t *testing.T) {
+	findings := []interfaces.Finding{
+		{File: "auth.go", StartLine: 40, Severity: interfaces.SeverityMedium, Description: "hardcoded secret detected in configuration"},
+		{File: "auth.go", StartLine: 47, Severity: interfaces.SeverityHigh, Description: "hardcoded secret detected in configuration"},
+	}
+
+	result := deduplicateFindings(findings)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 findings (lines 7 apart, beyond threshold of %d), got %d", LineProximityThreshold, len(result))
 	}
 }
 

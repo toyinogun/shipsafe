@@ -101,6 +101,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 		results = append(results, aiResult)
 	}
 
+	// 5b. Deduplicate findings across static analyzers and AI review.
+	results = deduplicateCrossAnalyzer(results)
+
 	// 6. Calculate trust score.
 	calc := scorer.NewCalculator(
 		scorer.WithThresholds(cfg.Thresholds.Green, cfg.Thresholds.Yellow),
@@ -234,4 +237,61 @@ func selectFormatter(name string) formatter {
 	default:
 		return report.NewTerminalFormatter()
 	}
+}
+
+// deduplicateCrossAnalyzer removes findings from AI review that overlap with
+// static analyzer findings. When both a static analyzer and the AI reviewer
+// flag the same issue (same file, nearby lines, similar description), the
+// static analyzer finding is kept because it has more precise line numbers.
+func deduplicateCrossAnalyzer(results []*interfaces.AnalysisResult) []*interfaces.AnalysisResult {
+	if len(results) <= 1 {
+		return results
+	}
+
+	// Collect all static (non-AI) findings.
+	var staticFindings []interfaces.Finding
+	for _, res := range results {
+		if res.AnalyzerName == "ai-reviewer" {
+			continue
+		}
+		staticFindings = append(staticFindings, res.Findings...)
+	}
+
+	if len(staticFindings) == 0 {
+		return results
+	}
+
+	// For each AI result, remove findings that duplicate a static finding.
+	for i, res := range results {
+		if res.AnalyzerName != "ai-reviewer" {
+			continue
+		}
+
+		kept := make([]interfaces.Finding, 0, len(res.Findings))
+		removed := 0
+		for _, aiFinding := range res.Findings {
+			isDup := false
+			for _, sf := range staticFindings {
+				if ai.IsDuplicate(aiFinding, sf) {
+					isDup = true
+					break
+				}
+			}
+			if isDup {
+				removed++
+			} else {
+				kept = append(kept, aiFinding)
+			}
+		}
+
+		if removed > 0 {
+			slog.Info("cross-analyzer dedup removed AI findings duplicated by static analyzers",
+				"removed", removed, "kept", len(kept))
+			updated := *res
+			updated.Findings = kept
+			results[i] = &updated
+		}
+	}
+
+	return results
 }
