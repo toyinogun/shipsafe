@@ -1,0 +1,23 @@
+# ShipSafe Code Verification — container-based workflow
+# Copy this file to .forgejo/workflows/shipsafe.yml in your repository
+name: ShipSafe Code Verification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    container:
+      image: repo.toyintest.org/teey/shipsafe:v0.3.0-alpha
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run ShipSafe CI
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          SHIPSAFE_AI_API_KEY: ${{ secrets.SHIPSAFE_AI_API_KEY }}
+        run: shipsafe ci

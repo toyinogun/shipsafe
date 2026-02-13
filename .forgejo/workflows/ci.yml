@@ -33,3 +33,6 @@ jobs:
 
       - name: Dogfood — scan clean diff
         run: ./shipsafe scan --diff tests/fixtures/diffs/clean.diff
+
+      - name: Dogfood — scan last commit
+        run: ./shipsafe scan --diff <(git diff HEAD~1) || true

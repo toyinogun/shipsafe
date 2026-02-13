@@ -64,6 +64,68 @@ ai:
 
 See `shipsafe.example.yml` for full configuration reference.
 
+## CI Integration
+
+Add to your repo's `.forgejo/workflows/shipsafe.yml`:
+
+```yaml
+name: ShipSafe Code Verification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install ShipSafe
+        run: |
+          curl -fsSL https://repo.toyintest.org/teey/shipsafe/releases/download/v0.3.0-alpha/shipsafe-linux-amd64 -o /usr/local/bin/shipsafe
+          chmod +x /usr/local/bin/shipsafe
+
+      - name: Run ShipSafe CI
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          SHIPSAFE_AI_API_KEY: ${{ secrets.SHIPSAFE_AI_API_KEY }}
+        run: shipsafe ci
+```
+
+### Using container instead
+
+```yaml
+name: ShipSafe Code Verification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    container:
+      image: repo.toyintest.org/teey/shipsafe:v0.3.0-alpha
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run ShipSafe CI
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          SHIPSAFE_AI_API_KEY: ${{ secrets.SHIPSAFE_AI_API_KEY }}
+        run: shipsafe ci
+```
+
+### Required secrets
+
+- `FORGEJO_TOKEN` — repo token with PR comment permissions
+- `SHIPSAFE_AI_API_KEY` — OpenAI-compatible API key (optional, for AI review)
+
 ## Architecture
 
 See [DESIGN.md](DESIGN.md) for the full system design.
