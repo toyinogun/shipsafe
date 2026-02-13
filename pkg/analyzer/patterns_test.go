@@ -97,6 +97,46 @@ func TestPatternsAnalyzer_EmptyCatch_Detected(t *testing.T) {
 	}
 }
 
+func TestPatternsAnalyzer_EmptyCatch_SkippedInYAML(t *testing.T) {
+	yamlPaths := []string{
+		"config.yaml",
+		"docker-compose.yml",
+		"deploy/values.yaml",
+		".github/workflows/ci.yml",
+		"Chart.yaml",
+	}
+
+	for _, path := range yamlPaths {
+		t.Run(path, func(t *testing.T) {
+			// YAML indentation patterns can look like catch blocks to regex.
+			diff := diffWithAddedLines(path,
+				`except:`,
+				`  - name: test`,
+				`catch {}`,
+			)
+			result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if hasFindingWithID(result.Findings, "PAT-EMPTY-CATCH") {
+				t.Fatalf("empty catch should not be flagged in YAML file %q", path)
+			}
+		})
+	}
+}
+
+func TestPatternsAnalyzer_EmptyCatch_StillDetectedInCode(t *testing.T) {
+	// Ensure empty catch detection still works for code files.
+	diff := diffWithAddedLines("handler.js", `} catch (e) {}`)
+	result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasFindingWithID(result.Findings, "PAT-EMPTY-CATCH") {
+		t.Fatal("empty catch should still be detected in .js files")
+	}
+}
+
 func TestPatternsAnalyzer_EmptyCatch_NotDetected(t *testing.T) {
 	tests := []struct {
 		name string

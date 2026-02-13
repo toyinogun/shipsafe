@@ -119,6 +119,47 @@ var checksumPrefixes = []string{
 	"sha384:",
 }
 
+// Frontend file extensions where entropy thresholds should be relaxed.
+var frontendFileExts = []string{".tsx", ".jsx"}
+
+// Patterns indicating a line contains CSS/styling attributes (Tailwind, JSX).
+// Lines matching these are almost never secrets.
+var frontendStylingPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\bclass(?:Name)?\s*=`),
+	regexp.MustCompile(`(?i)\bcn\s*\(`),
+	regexp.MustCompile(`(?i)\b(?:src|href|alt|placeholder)\s*=`),
+}
+
+// jsxAttributeValueRe matches HTML/JSX attribute="long-string-here" patterns.
+var jsxAttributeValueRe = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9-]*\s*=\s*["'][^"']{20,}["']`)
+
+// isFrontendFile reports whether the file is a frontend file (.tsx, .jsx).
+func isFrontendFile(path string) bool {
+	lower := strings.ToLower(path)
+	for _, ext := range frontendFileExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// isFrontendStylingLine reports whether a line contains CSS class or styling attribute patterns.
+func isFrontendStylingLine(line string) bool {
+	for _, re := range frontendStylingPatterns {
+		if re.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// isJSXAttributeValue reports whether the high-entropy portion of the line
+// is inside an HTML/JSX attribute value (e.g., data-id="long-string-here").
+func isJSXAttributeValue(line string) bool {
+	return jsxAttributeValueRe.MatchString(line)
+}
+
 // isChecksumLine reports whether the line looks like a checksum entry.
 func isChecksumLine(line string) bool {
 	trimmed := strings.TrimSpace(line)
@@ -194,6 +235,12 @@ func (s *SecretsAnalyzer) scanLine(path string, line interfaces.Line) []interfac
 		return nil
 	}
 
+	// Skip lines that contain CSS/styling attributes — these generate
+	// false positives from Tailwind classes and JSX attribute values.
+	if isFrontendStylingLine(content) {
+		return nil
+	}
+
 	var findings []interfaces.Finding
 
 	// Regex pattern matching.
@@ -235,13 +282,33 @@ func (s *SecretsAnalyzer) checkEntropy(path string, line interfaces.Line) (inter
 		return interfaces.Finding{}, false
 	}
 
+	// Skip lines that are clearly CSS/styling or JSX attribute values.
+	if isFrontendStylingLine(line.Content) {
+		return interfaces.Finding{}, false
+	}
+	if isFrontendFile(path) && isJSXAttributeValue(line.Content) {
+		return interfaces.Finding{}, false
+	}
+
+	// Use a higher entropy threshold for frontend files because CSS class
+	// strings typically fall in the 4.5-5.5 range while real secrets are 5.5+.
+	threshold := s.entropyThreshold
+	if isFrontendFile(path) {
+		threshold = 5.5
+	}
+
 	tokens := extractTokens(line.Content)
 	for _, token := range tokens {
 		if len(token) < s.entropyMinLength {
 			continue
 		}
+		// Strings with 3+ spaces are text content (prose, descriptions,
+		// testimonials), not secrets. Real API keys/tokens never contain spaces.
+		if strings.Count(token, " ") >= 3 {
+			continue
+		}
 		entropy := shannonEntropy(token)
-		if entropy > s.entropyThreshold {
+		if entropy > threshold {
 			return interfaces.Finding{
 				ID:        fmt.Sprintf("SEC-ENTROPY-%d", line.Number),
 				Category:  interfaces.CategorySecrets,

@@ -52,6 +52,10 @@ var testFileIndicators = []string{
 	"_test.py", "_test.rb",
 }
 
+// File extensions that should skip empty catch/except block detection.
+// YAML files don't have try/catch blocks; the regex matches indentation patterns.
+var emptyCatchSkipExts = []string{".yaml", ".yml"}
+
 // PatternsAnalyzer detects common anti-patterns in code diffs.
 type PatternsAnalyzer struct{}
 
@@ -133,8 +137,8 @@ func (p *PatternsAnalyzer) scanLine(path string, line interfaces.Line, isTest bo
 		}
 	}
 
-	// Check empty catch/except blocks (skip test files).
-	if !isTest {
+	// Check empty catch/except blocks (skip test files and YAML files).
+	if !isTest && !isEmptyCatchSkipFile(path) {
 		for _, re := range emptyCatchPatterns {
 			if re.MatchString(content) {
 				findings = append(findings, interfaces.Finding{
@@ -218,6 +222,17 @@ func isTestFile(path string) bool {
 	lower := strings.ToLower(path)
 	for _, indicator := range testFileIndicators {
 		if strings.Contains(lower, indicator) {
+			return true
+		}
+	}
+	return false
+}
+
+// isEmptyCatchSkipFile reports whether a file should skip empty catch/except detection.
+func isEmptyCatchSkipFile(path string) bool {
+	lower := strings.ToLower(path)
+	for _, ext := range emptyCatchSkipExts {
+		if strings.HasSuffix(lower, ext) {
 			return true
 		}
 	}

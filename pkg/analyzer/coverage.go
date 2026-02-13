@@ -122,6 +122,54 @@ var testFileMappings = []testFileMapping{
 	},
 }
 
+// Files that are exempt from test coverage checks. These are framework
+// convention files, config files, type definitions, styles, and other files
+// that typically don't need dedicated unit tests.
+var coverageExemptPatterns = []string{
+	// Next.js layout and page files
+	"layout.tsx", "layout.jsx", "page.tsx", "page.jsx",
+	// Type definition files
+	".d.ts",
+	// Style files
+	".css", ".scss",
+}
+
+// Prefix-based config file patterns exempt from coverage checks.
+var coverageExemptPrefixes = []string{
+	"next.config.",
+	"tailwind.config.",
+	"postcss.config.",
+	"tsconfig",
+	"eslint",
+	"prettier",
+}
+
+// Exact base name matches exempt from coverage checks.
+var coverageExemptBaseNames = []string{
+	"constants.ts", "constants.tsx",
+	"animations.ts", "animations.tsx",
+}
+
+// minLinesForCoverage is the minimum number of added lines in a file
+// before we flag it for missing tests. Small utility files, re-exports,
+// and barrel files don't warrant test coverage findings.
+const minLinesForCoverage = 20
+
+// logicPatternIndicators are strings whose presence in a .tsx/.jsx file
+// indicates testable logic (hooks, async operations, data fetching).
+// Pure presentational components that lack these don't need unit tests.
+var logicPatternIndicators = []string{
+	"useState",
+	"useEffect",
+	"useReducer",
+	"useCallback",
+	"fetch(",
+	"axios",
+	"async function",
+	"async =>",
+	"async (",
+}
+
 // CoverageAnalyzer checks whether new or modified source files have
 // corresponding test files in the diff.
 type CoverageAnalyzer struct{}
@@ -160,6 +208,23 @@ func (c *CoverageAnalyzer) Analyze(ctx context.Context, diff *interfaces.Diff) (
 
 		// Skip if the file itself is a test file.
 		if isTestFileForCoverage(file.Path) {
+			continue
+		}
+
+		// Skip files exempt from coverage checks (configs, layouts, styles, etc.)
+		if isCoverageExempt(file.Path) {
+			continue
+		}
+
+		// Skip files with fewer than minLinesForCoverage added lines.
+		if countAddedLines(file) < minLinesForCoverage {
+			continue
+		}
+
+		// For React component files (.tsx/.jsx), only flag if they contain
+		// logic patterns (hooks, async, data fetching). Pure presentational
+		// components don't need unit tests.
+		if isReactComponentFile(file.Path) && !fileContainsLogicPatterns(file) {
 			continue
 		}
 
@@ -231,6 +296,65 @@ func isTestFileForCoverage(path string) bool {
 	for _, mapping := range testFileMappings {
 		if mapping.isTestFile(path) {
 			return true
+		}
+	}
+	return false
+}
+
+// isCoverageExempt reports whether a file is exempt from test coverage checks.
+func isCoverageExempt(path string) bool {
+	lower := strings.ToLower(path)
+	base := strings.ToLower(filepath.Base(path))
+
+	// Check suffix-based patterns (e.g., layout.tsx, .d.ts, .css).
+	for _, pattern := range coverageExemptPatterns {
+		if strings.HasSuffix(lower, pattern) {
+			return true
+		}
+	}
+
+	// Check prefix-based config file patterns.
+	for _, prefix := range coverageExemptPrefixes {
+		if strings.HasPrefix(base, prefix) {
+			return true
+		}
+	}
+
+	// Check exact base name matches.
+	for _, name := range coverageExemptBaseNames {
+		if base == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// countAddedLines returns the total number of added lines across all hunks in a file.
+func countAddedLines(file *interfaces.FileDiff) int {
+	total := 0
+	for _, hunk := range file.Hunks {
+		total += len(hunk.AddedLines)
+	}
+	return total
+}
+
+// isReactComponentFile reports whether the file is a React component (.tsx/.jsx).
+func isReactComponentFile(path string) bool {
+	lower := strings.ToLower(path)
+	return strings.HasSuffix(lower, ".tsx") || strings.HasSuffix(lower, ".jsx")
+}
+
+// fileContainsLogicPatterns checks whether any added line in the file contains
+// indicators of testable logic (hooks, async operations, data fetching).
+func fileContainsLogicPatterns(file *interfaces.FileDiff) bool {
+	for _, hunk := range file.Hunks {
+		for _, line := range hunk.AddedLines {
+			for _, pattern := range logicPatternIndicators {
+				if strings.Contains(line.Content, pattern) {
+					return true
+				}
+			}
 		}
 	}
 	return false
