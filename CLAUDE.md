@@ -33,6 +33,10 @@ ShipSafe is a self-hosted AI code verification gateway. It sits in CI/CD pipelin
 shipsafe/
 ├── CLAUDE.md                    # THIS FILE — project rules
 ├── README.md                    # User-facing docs
+├── DESIGN.md                    # System architecture document
+├── TASKBOARD.md                 # Active task tracking for subagents
+├── .shipsafe.yml                # ShipSafe's own config (dogfooding)
+├── shipsafe.example.yml         # Example configuration file
 ├── go.mod
 ├── go.sum
 ├── main.go                      # Entrypoint, minimal — delegates to cmd/
@@ -41,21 +45,14 @@ shipsafe/
 │   ├── root.go                  # Root command, global flags
 │   ├── scan.go                  # `shipsafe scan` command
 │   ├── ci.go                    # `shipsafe ci` command (CI mode)
-│   ├── server.go                # `shipsafe server` command (server mode)
 │   └── version.go               # `shipsafe version`
 │
 ├── pkg/
 │   ├── interfaces/              # Shared interfaces and types (THE CONTRACT LAYER)
-│   │   ├── types.go             # Core domain types (Finding, TrustScore, Report, etc.)
-│   │   ├── analyzer.go          # Analyzer interface
-│   │   ├── scorer.go            # Scorer interface
-│   │   ├── reporter.go          # Reporter interface
-│   │   ├── ai.go                # AI reviewer interface
-│   │   └── vcs.go               # Version control system interface
+│   │   ├── types.go             # Core domain types, all interfaces (Analyzer, Scorer, Reporter, AIReviewer, VCSProvider, etc.)
+│   │   └── vcs.go               # VCS-specific types (DiffParser, Pipeline)
 │   │
-│   ├── cli/                     # CLI-specific logic (output formatting, progress)
-│   │   ├── output.go            # Terminal output helpers
-│   │   ├── progress.go          # Progress indicators
+│   ├── cli/                     # CLI-specific logic
 │   │   └── config.go            # Config file loading (.shipsafe.yml)
 │   │
 │   ├── analyzer/                # Static analysis engine
@@ -71,22 +68,14 @@ shipsafe/
 │   │   ├── reviewer.go          # LLM-based code review
 │   │   ├── provider.go          # LLM provider abstraction
 │   │   ├── providers/           # Concrete provider implementations
-│   │   │   ├── openai.go        # OpenAI-compatible (also covers Ollama, vLLM, OpenRouter)
-│   │   │   └── anthropic.go     # Anthropic Claude API
+│   │   │   └── openai.go        # OpenAI-compatible (also covers Ollama, vLLM, OpenRouter)
 │   │   ├── prompts/             # Prompt templates
 │   │   │   ├── semantic.go      # Semantic diff analysis prompts
 │   │   │   ├── logic.go         # Logic error detection prompts
 │   │   │   └── convention.go    # Convention compliance prompts
 │   │   └── context.go           # Codebase context builder for LLM
 │   │
-│   ├── security/                # Security scanning layer
-│   │   ├── scanner.go           # Security scan orchestrator
-│   │   ├── deps.go              # Dependency vulnerability checking
-│   │   ├── sbom.go              # SBOM generation (CycloneDX)
-│   │   ├── injection.go         # SQL/command injection detection
-│   │   └── compliance/          # Compliance frameworks
-│   │       ├── nis2.go          # NIS2 mapping
-│   │       └── gdpr.go          # GDPR data handling checks
+│   ├── security/                # Security scanning layer (Phase 5)
 │   │
 │   ├── scorer/                  # Trust score calculation
 │   │   ├── calculator.go        # Weighted scoring model
@@ -97,72 +86,35 @@ shipsafe/
 │   │   ├── generator.go         # Report orchestrator
 │   │   ├── markdown.go          # Markdown report format
 │   │   ├── json.go              # JSON report format
-│   │   ├── terminal.go          # Terminal pretty-print format
-│   │   ├── html.go              # HTML report format
-│   │   └── templates/           # Go templates for reports
-│   │       ├── report.md.tmpl
-│   │       ├── report.html.tmpl
-│   │       └── ci-comment.md.tmpl
+│   │   └── terminal.go          # Terminal pretty-print format
 │   │
 │   ├── vcs/                     # Version control integration
-│   │   ├── git.go               # Git operations (diff parsing, log, blame)
 │   │   ├── diff.go              # Unified diff parser
-│   │   ├── forgejo.go           # Forgejo API client (PR comments, webhooks)
-│   │   ├── github.go            # GitHub API client
-│   │   └── gitlab.go            # GitLab API client
+│   │   ├── forgejo.go           # Forgejo API client (PR comments, status checks)
+│   │   └── github.go            # GitHub API client (PR comments, status checks)
 │   │
 │   └── server/                  # Server mode (Phase 4+)
-│       ├── server.go            # HTTP server
-│       ├── routes.go            # API routes
-│       ├── webhook.go           # Webhook handlers
-│       └── middleware.go        # Auth, logging middleware
 │
 ├── tests/                       # Integration tests
-│   ├── fixtures/                # Test fixture repos and diffs
-│   │   ├── good-pr/             # Clean, well-tested PR
-│   │   ├── bad-pr/              # PR with issues
-│   │   ├── vulnerable-pr/       # PR with security issues
-│   │   ├── no-tests-pr/         # PR missing tests
+│   ├── fixtures/                # Test fixture diffs
 │   │   └── diffs/               # Sample unified diff files
 │   │       ├── clean.diff
 │   │       ├── secrets-leak.diff
 │   │       ├── complexity-spike.diff
-│   │       └── missing-tests.diff
+│   │       ├── missing-tests.diff
+│   │       └── mixed-issues.diff
 │   ├── integration_test.go
 │   └── helpers.go               # Test utilities
 │
 ├── deploy/                      # Deployment artifacts
 │   ├── docker/
 │   │   └── Dockerfile           # Multi-stage build
-│   ├── helm/
-│   │   └── shipsafe/            # Helm chart
-│   │       ├── Chart.yaml
-│   │       ├── values.yaml
-│   │       ├── templates/
-│   │       │   ├── deployment.yaml
-│   │       │   ├── service.yaml
-│   │       │   ├── configmap.yaml
-│   │       │   ├── secret.yaml
-│   │       │   ├── ingress.yaml
-│   │       │   └── serviceaccount.yaml
-│   │       └── README.md
-│   ├── argocd/
-│   │   └── application.yaml     # ArgoCD Application manifest
 │   └── ci/
-│       ├── forgejo-action.yml   # Forgejo Actions workflow
 │       └── github-action.yml    # GitHub Actions workflow
 │
-├── docs/
-│   ├── architecture/
-│   │   ├── DESIGN.md            # System architecture document
-│   │   └── INTERFACES.md        # Interface contract documentation
-│   ├── TASKBOARD.md             # Active task tracking for subagents
-│   └── user/
-│       ├── QUICKSTART.md        # Getting started guide
-│       └── CONFIGURATION.md     # Config reference
-│
-└── configs/
-    └── shipsafe.example.yml     # Example configuration file
+└── .forgejo/
+    └── workflows/
+        └── ci.yml               # Forgejo Actions workflow
 ```
 
 ---
@@ -173,7 +125,7 @@ shipsafe/
 
 | Agent | Owned Paths | Read Access |
 |-------|------------|-------------|
-| **Architect** | `docs/architecture/`, `pkg/interfaces/`, `CLAUDE.md`, `docs/TASKBOARD.md` | Everything |
+| **Architect** | `DESIGN.md`, `TASKBOARD.md`, `pkg/interfaces/`, `CLAUDE.md` | Everything |
 | **CLI Agent** | `cmd/`, `pkg/cli/`, `main.go` | `pkg/interfaces/` |
 | **Analyzer Agent** | `pkg/analyzer/` | `pkg/interfaces/` |
 | **AI Agent** | `pkg/ai/` | `pkg/interfaces/` |
@@ -186,8 +138,8 @@ shipsafe/
 
 ### Boundary Enforcement
 
-- If an agent needs a new method on an interface, it MUST document the request in `docs/TASKBOARD.md` and wait for the Architect to update `pkg/interfaces/`.
-- If an agent discovers a bug in another agent's code, it documents it in `docs/TASKBOARD.md` — it does NOT fix it directly.
+- If an agent needs a new method on an interface, it MUST document the request in `TASKBOARD.md` and wait for the Architect to update `pkg/interfaces/`.
+- If an agent discovers a bug in another agent's code, it documents it in `TASKBOARD.md` — it does NOT fix it directly.
 - The Architect is the only agent that modifies `pkg/interfaces/`.
 - The Test Agent may create `*_test.go` files in any package directory.
 
@@ -391,7 +343,7 @@ go test ./pkg/analyzer/...
 
 ## Task Tracking
 
-All work is tracked in `docs/TASKBOARD.md`. Format:
+All work is tracked in `TASKBOARD.md`. Format:
 
 ```markdown
 ## Phase N: Title
@@ -407,6 +359,18 @@ All work is tracked in `docs/TASKBOARD.md`. Format:
 ```
 
 Agents check `TASKBOARD.md` at the start of each session to understand current priorities.
+
+---
+
+## Current Status
+
+**v0.3.0** — Phases 0-3 substantially complete. Full pipeline working: static analysis (5 analyzers), AI-powered review, trust scoring, CI integration with Forgejo and GitHub.
+
+Remaining gaps before Phase 4:
+- `pkg/vcs/gitlab.go` — GitLab VCS provider not yet implemented
+- `pkg/vcs/git.go` — Local git operations (diff from HEAD, branch comparison) not yet implemented
+- Dogfooding — ShipSafe not yet running in its own CI pipeline
+- `pkg/ai/providers/anthropic.go` — Anthropic provider not yet implemented
 
 ---
 

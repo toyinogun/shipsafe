@@ -62,11 +62,11 @@ ai:
   enabled: false  # Enable for LLM-powered review
 ```
 
-See `configs/shipsafe.example.yml` for full configuration reference.
+See `shipsafe.example.yml` for full configuration reference.
 
 ## Architecture
 
-See [docs/architecture/DESIGN.md](docs/architecture/DESIGN.md) for the full system design.
+See [DESIGN.md](DESIGN.md) for the full system design.
 
 ## License
 
