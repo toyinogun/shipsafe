@@ -1,0 +1,173 @@
+diff --git a/.DS_Store b/.DS_Store
+index fd78388..e19cd2b 100644
+Binary files a/.DS_Store and b/.DS_Store differ
+diff --git a/.dockerignore b/.dockerignore
+new file mode 100644
+index 0000000..321081d
+--- /dev/null
++++ b/.dockerignore
+@@ -0,0 +1,33 @@
++# Git
++.git
++.gitignore
++
++# IDE
++.idea
++.vscode
++*.swp
++*.swo
++
++# OS
++.DS_Store
++Thumbs.db
++
++# Build artifacts
++shipsafe
++*.exe
++
++# Deployment (not needed inside the image)
++deploy/
++.forgejo/
++
++# Documentation
++docs/
++*.md
++!go.sum
++
++# Tests fixtures (not needed at runtime)
++tests/
++
++# Config examples
++configs/
++shipsafe.example.yml
+diff --git a/.forgejo/workflows/ci.yml b/.forgejo/workflows/ci.yml
+new file mode 100644
+index 0000000..f55fdc0
+--- /dev/null
++++ b/.forgejo/workflows/ci.yml
+@@ -0,0 +1,35 @@
++name: CI
++
++on:
++  push:
++    branches: [main]
++  pull_request:
++
++jobs:
++  build-and-test:
++    runs-on: ubuntu-latest
++    steps:
++      - name: Checkout code
++        uses: actions/checkout@v4
++
++      - name: Setup Go
++        uses: actions/setup-go@v5
++        with:
++          go-version: "1.25"
++
++      - name: Vet
++        run: go vet ./...
++
++      - name: Test
++        run: go test ./...
++
++      - name: Build
++        run: |
++          go build -ldflags "-s -w \
++            -X github.com/toyinlola/shipsafe/cmd.Version=ci \
++            -X github.com/toyinlola/shipsafe/cmd.Commit=${{ github.sha }} \
++            -X github.com/toyinlola/shipsafe/cmd.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
++            -o shipsafe .
++
++      - name: Dogfood — scan clean diff
++        run: ./shipsafe scan --diff tests/fixtures/diffs/clean.diff
+diff --git a/deploy/ci/github-action.yml b/deploy/ci/github-action.yml
+new file mode 100644
+index 0000000..7c109cd
+--- /dev/null
++++ b/deploy/ci/github-action.yml
+@@ -0,0 +1,39 @@
++name: "ShipSafe Code Verification"
++description: "Run ShipSafe AI code verification on pull requests"
++
++inputs:
++  version:
++    description: "ShipSafe version to download"
++    required: false
++    default: "latest"
++  config-path:
++    description: "Path to .shipsafe.yml config file"
++    required: false
++    default: ".shipsafe.yml"
++  fail-on:
++    description: "Trust score level that causes a failure (red or yellow)"
++    required: false
++    default: "red"
++
++runs:
++  using: "composite"
++  steps:
++    - name: Download ShipSafe
++      shell: bash
++      run: |
++        VERSION="${{ inputs.version }}"
++        if [ "$VERSION" = "latest" ]; then
++          DOWNLOAD_URL="https://github.com/toyinlola/shipsafe/releases/latest/download/shipsafe-linux-amd64"
++        else
++          DOWNLOAD_URL="https://github.com/toyinlola/shipsafe/releases/download/v${VERSION}/shipsafe-linux-amd64"
++        fi
++        curl -fsSL "$DOWNLOAD_URL" -o /usr/local/bin/shipsafe
++        chmod +x /usr/local/bin/shipsafe
++
++    - name: Run ShipSafe
++      shell: bash
++      env:
++        SHIPSAFE_CONFIG: ${{ inputs.config-path }}
++        SHIPSAFE_FAIL_ON: ${{ inputs.fail-on }}
++      run: |
++        shipsafe ci --config "$SHIPSAFE_CONFIG" --fail-on "$SHIPSAFE_FAIL_ON"
+diff --git a/deploy/docker/Dockerfile b/deploy/docker/Dockerfile
+new file mode 100644
+index 0000000..14938b6
+--- /dev/null
++++ b/deploy/docker/Dockerfile
+@@ -0,0 +1,39 @@
++# Stage 1: Build the ShipSafe binary
++FROM golang:1.25-alpine AS builder
++
++RUN apk add --no-cache git ca-certificates
++
++WORKDIR /src
++
++# Cache dependency downloads
++COPY go.mod go.sum ./
++RUN go mod download
++
++# Copy source and build static binary with version injection
++COPY . .
++
++ARG VERSION=dev
++ARG COMMIT=none
++ARG BUILD_DATE=unknown
++
++RUN CGO_ENABLED=0 GOOS=linux go build \
++    -ldflags "-s -w \
++      -X github.com/toyinlola/shipsafe/cmd.Version=${VERSION} \
++      -X github.com/toyinlola/shipsafe/cmd.Commit=${COMMIT} \
++      -X github.com/toyinlola/shipsafe/cmd.BuildDate=${BUILD_DATE}" \
++    -o /shipsafe .
++
++# Stage 2: Minimal runtime image
++FROM alpine:3.20
++
++# git is required for `shipsafe scan` on repositories
++RUN apk add --no-cache git ca-certificates \
++    && addgroup -S shipsafe \
++    && adduser -S -G shipsafe shipsafe
++
++COPY --from=builder /shipsafe /usr/local/bin/shipsafe
++
++USER shipsafe
++WORKDIR /workspace
++
++ENTRYPOINT ["shipsafe"]

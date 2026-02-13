@@ -1,0 +1,884 @@
+diff --git a/.DS_Store b/.DS_Store
+index fd78388..e19cd2b 100644
+Binary files a/.DS_Store and b/.DS_Store differ
+diff --git a/pkg/analyzer/complexity.go b/pkg/analyzer/complexity.go
+index ffc28f7..d3694b9 100644
+--- a/pkg/analyzer/complexity.go
++++ b/pkg/analyzer/complexity.go
+@@ -13,6 +13,7 @@ import (
+ const (
+ 	defaultComplexityThreshold = 15
+ 	highComplexityThreshold    = 20
++	testFileThresholdBoost     = 10
+ )
+ 
+ // Decision-point patterns matched against added lines.
+@@ -143,14 +144,22 @@ func (c *ComplexityAnalyzer) analyzeFile(file *interfaces.FileDiff) []interfaces
+ 		return nil
+ 	}
+ 
++	// Test files get a higher threshold — complex fixtures are intentional.
++	threshold := c.threshold
++	highThreshold := highComplexityThreshold
++	if isTestFile(file.Path) {
++		threshold += testFileThresholdBoost
++		highThreshold += testFileThresholdBoost
++	}
++
+ 	regions := extractFuncRegions(lines)
+ 
+ 	var findings []interfaces.Finding
+ 	for _, region := range regions {
+ 		complexity := countComplexity(region.lines)
+-		if complexity > c.threshold {
++		if complexity > threshold {
+ 			severity := interfaces.SeverityMedium
+-			if complexity > highComplexityThreshold {
++			if complexity > highThreshold {
+ 				severity = interfaces.SeverityHigh
+ 			}
+ 
+@@ -164,14 +173,14 @@ func (c *ComplexityAnalyzer) analyzeFile(file *interfaces.FileDiff) []interfaces
+ 				Title:     fmt.Sprintf("High cyclomatic complexity in %s (%d)", region.name, complexity),
+ 				Description: fmt.Sprintf(
+ 					"Function %s has a cyclomatic complexity of %d (threshold: %d). Complex functions are harder to test and maintain.",
+-					region.name, complexity, c.threshold,
++					region.name, complexity, threshold,
+ 				),
+ 				Suggestion: "Break the function into smaller, focused functions with single responsibilities.",
+ 				Source:     "complexity",
+ 				Confidence: 0.80,
+ 				Metadata: map[string]any{
+ 					"complexity": complexity,
+-					"threshold":  c.threshold,
++					"threshold":  threshold,
+ 				},
+ 			})
+ 		}
+diff --git a/pkg/analyzer/complexity_test.go b/pkg/analyzer/complexity_test.go
+index 3395ccb..666c936 100644
+--- a/pkg/analyzer/complexity_test.go
++++ b/pkg/analyzer/complexity_test.go
+@@ -465,6 +465,166 @@ func TestExtractFuncName(t *testing.T) {
+ 	}
+ }
+ 
++func TestComplexityAnalyzer_TestFile_HigherThreshold(t *testing.T) {
++	// Build a function with complexity ~18 (above default 15, below test threshold 25).
++	lines := []string{
++		`func TestProcessData_ComplexFixtures(t *testing.T) {`,
++		`    if len(input) == 0 {`,
++		`        return`,
++		`    }`,
++		`    for _, item := range input {`,
++		`        if item == "" {`,
++		`            continue`,
++		`        }`,
++		`        if strings.HasPrefix(item, "a") {`,
++		`            if len(item) > 5 {`,
++		`                for _, c := range item {`,
++		`                    if c == 'x' || c == 'y' {`,
++		`                        break`,
++		`                    }`,
++		`                }`,
++		`            }`,
++		`        } else if strings.HasPrefix(item, "b") {`,
++		`            switch item {`,
++		`            case "ba":`,
++		`            case "bb":`,
++		`            case "bc":`,
++		`            case "bd":`,
++		`            }`,
++		`        } else if item == "c" && len(item) > 0 {`,
++		`            if done {`,
++		`                break`,
++		`            }`,
++		`        }`,
++		`    }`,
++		`}`,
++	}
++
++	testPaths := []string{
++		"pkg/analyzer/secrets_test.go",
++		"src/utils.test.js",
++		"tests/test_handler.py",
++		"src/utils.spec.ts",
++	}
++
++	for _, path := range testPaths {
++		t.Run(path, func(t *testing.T) {
++			diff := diffWithAddedLines(path, lines...)
++			result, err := NewComplexityAnalyzer().Analyze(context.Background(), diff)
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if len(result.Findings) != 0 {
++				t.Fatalf("test file %q should have boosted threshold, got %d findings: %v",
++					path, len(result.Findings), result.Findings[0].Title)
++			}
++		})
++	}
++}
++
++func TestComplexityAnalyzer_TestFile_StillFlagsExtremeComplexity(t *testing.T) {
++	// Build a function with complexity well above the boosted threshold (25).
++	// Need > 25 decision points + base 1 = 26+ total.
++	lines := []string{
++		`func TestMega_ExtremeComplexity(t *testing.T) {`,
++		`    if x > 0 {`,
++		`        if x > 1 {`,
++		`            if x > 2 {`,
++		`                if x > 3 {`,
++		`                    if x > 4 {`,
++		`                        if x > 5 {`,
++		`                            if x > 6 {`,
++		`                                if x > 7 {`,
++		`                                    for i := 0; i < x; i++ {`,
++		`                                        if i%2 == 0 || i%3 == 0 {`,
++		`                                            switch i {`,
++		`                                            case 1:`,
++		`                                            case 2:`,
++		`                                            case 3:`,
++		`                                            case 4:`,
++		`                                            case 5:`,
++		`                                            }`,
++		`                                        }`,
++		`                                        while x > 0 && i < 100 {`,
++		`                                            if done || abort {`,
++		`                                            }`,
++		`                                        }`,
++		`                                        for j := 0; j < i; j++ {`,
++		`                                            if j > 0 && j < 50 {`,
++		`                                            }`,
++		`                                        }`,
++		`                                        if extra || flag {`,
++		`                                        }`,
++		`                                    }`,
++		`                                }`,
++		`                            }`,
++		`                        }`,
++		`                    }`,
++		`                }`,
++		`            }`,
++		`        }`,
++		`    }`,
++		`}`,
++	}
++
++	diff := diffWithAddedLines("mega_test.go", lines...)
++	result, err := NewComplexityAnalyzer().Analyze(context.Background(), diff)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(result.Findings) == 0 {
++		t.Fatal("extremely complex test function should still be flagged")
++	}
++}
++
++func TestComplexityAnalyzer_NonTestFile_OriginalThreshold(t *testing.T) {
++	// Ensure non-test files still use the original threshold.
++	lines := []string{
++		`func processData(input []string) error {`,
++		`    if len(input) == 0 {`,
++		`        return nil`,
++		`    }`,
++		`    for _, item := range input {`,
++		`        if item == "" {`,
++		`            continue`,
++		`        }`,
++		`        if strings.HasPrefix(item, "a") {`,
++		`            if len(item) > 5 {`,
++		`                for _, c := range item {`,
++		`                    if c == 'x' || c == 'y' {`,
++		`                        break`,
++		`                    }`,
++		`                }`,
++		`            }`,
++		`        } else if strings.HasPrefix(item, "b") {`,
++		`            switch item {`,
++		`            case "ba":`,
++		`            case "bb":`,
++		`            case "bc":`,
++		`            case "bd":`,
++		`            }`,
++		`        } else if item == "c" && len(item) > 0 {`,
++		`            while true {`,
++		`                if done {`,
++		`                    break`,
++		`                }`,
++		`            }`,
++		`        }`,
++		`    }`,
++		`    return nil`,
++		`}`,
++	}
++
++	diff := diffWithAddedLines("processor.go", lines...)
++	result, err := NewComplexityAnalyzer().Analyze(context.Background(), diff)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(result.Findings) == 0 {
++		t.Fatal("non-test file should use original threshold and flag this function")
++	}
++}
++
+ func TestComplexityAnalyzer_MetadataIncluded(t *testing.T) {
+ 	// Use a low threshold to guarantee a finding for metadata inspection.
+ 	lines := []string{
+diff --git a/pkg/analyzer/imports.go b/pkg/analyzer/imports.go
+index d76100b..b7ad9ce 100644
+--- a/pkg/analyzer/imports.go
++++ b/pkg/analyzer/imports.go
+@@ -10,27 +10,43 @@ import (
+ )
+ 
+ // Dependency manifest filenames to watch for.
++// Derived/lock files (go.sum, package-lock.json, etc.) are excluded to avoid
++// duplicate noise when the primary manifest is also in the diff.
+ var dependencyManifests = map[string]string{
+-	"go.mod":            "Go",
+-	"go.sum":            "Go",
+-	"package.json":      "JavaScript/TypeScript",
++	"go.mod":           "Go",
++	"package.json":     "JavaScript/TypeScript",
+ 	"package-lock.json": "JavaScript/TypeScript",
+-	"yarn.lock":         "JavaScript/TypeScript",
+-	"pnpm-lock.yaml":    "JavaScript/TypeScript",
+-	"requirements.txt":  "Python",
+-	"Pipfile":           "Python",
+-	"Pipfile.lock":      "Python",
+-	"pyproject.toml":    "Python",
+-	"poetry.lock":       "Python",
+-	"Cargo.toml":        "Rust",
+-	"Cargo.lock":        "Rust",
+-	"pom.xml":           "Java",
+-	"build.gradle":      "Java",
+-	"build.gradle.kts":  "Kotlin",
+-	"Gemfile":           "Ruby",
+-	"Gemfile.lock":      "Ruby",
+-	"composer.json":     "PHP",
+-	"composer.lock":     "PHP",
++	"yarn.lock":        "JavaScript/TypeScript",
++	"pnpm-lock.yaml":   "JavaScript/TypeScript",
++	"requirements.txt": "Python",
++	"Pipfile":          "Python",
++	"Pipfile.lock":     "Python",
++	"pyproject.toml":   "Python",
++	"poetry.lock":      "Python",
++	"Cargo.toml":       "Rust",
++	"Cargo.lock":       "Rust",
++	"pom.xml":          "Java",
++	"build.gradle":     "Java",
++	"build.gradle.kts": "Kotlin",
++	"Gemfile":          "Ruby",
++	"Gemfile.lock":     "Ruby",
++	"composer.json":    "PHP",
++	"composer.lock":    "PHP",
++}
++
++// derivedManifests maps lock/derived files to their primary manifest.
++// A derived file is skipped when its primary manifest is also present in the diff.
++// go.sum is always skipped (it is purely derived from go.mod).
++var derivedManifests = map[string]string{
++	"go.sum":            "", // always skip
++	"package-lock.json": "package.json",
++	"yarn.lock":         "package.json",
++	"pnpm-lock.yaml":    "package.json",
++	"Pipfile.lock":      "Pipfile",
++	"poetry.lock":       "pyproject.toml",
++	"Cargo.lock":        "Cargo.toml",
++	"Gemfile.lock":      "Gemfile",
++	"composer.lock":     "composer.json",
+ }
+ 
+ // Patterns to detect new dependency additions in various manifest files.
+@@ -93,6 +109,13 @@ func (im *ImportsAnalyzer) Analyze(ctx context.Context, diff *interfaces.Diff) (
+ 		AnalyzerName: im.Name(),
+ 	}
+ 
++	// Collect all basenames present in the diff so we can deduplicate
++	// derived manifests when their primary is also present.
++	presentFiles := make(map[string]bool)
++	for i := range diff.Files {
++		presentFiles[fileBaseName(diff.Files[i].Path)] = true
++	}
++
+ 	for i := range diff.Files {
+ 		if ctx.Err() != nil {
+ 			return result, ctx.Err()
+@@ -104,6 +127,12 @@ func (im *ImportsAnalyzer) Analyze(ctx context.Context, diff *interfaces.Diff) (
+ 		}
+ 
+ 		filename := fileBaseName(file.Path)
++
++		// Skip derived/lock files to avoid duplicate noise.
++		if im.shouldSkipDerived(filename, presentFiles) {
++			continue
++		}
++
+ 		lang, isManifest := dependencyManifests[filename]
+ 		if !isManifest {
+ 			continue
+@@ -116,6 +145,21 @@ func (im *ImportsAnalyzer) Analyze(ctx context.Context, diff *interfaces.Diff) (
+ 	return result, nil
+ }
+ 
++// shouldSkipDerived checks if a manifest file is a derived/lock file that
++// should be skipped. go.sum is always skipped; other lock files are skipped
++// when their primary manifest is also present in the diff.
++func (im *ImportsAnalyzer) shouldSkipDerived(filename string, presentFiles map[string]bool) bool {
++	primary, isDerived := derivedManifests[filename]
++	if !isDerived {
++		return false
++	}
++	// Empty primary means always skip (e.g., go.sum).
++	if primary == "" {
++		return true
++	}
++	return presentFiles[primary]
++}
++
+ // analyzeManifest inspects a dependency manifest file for changes.
+ func (im *ImportsAnalyzer) analyzeManifest(file *interfaces.FileDiff, filename, lang string) []interfaces.Finding {
+ 	var findings []interfaces.Finding
+diff --git a/pkg/analyzer/imports_test.go b/pkg/analyzer/imports_test.go
+index d5dbc6e..b0f33f6 100644
+--- a/pkg/analyzer/imports_test.go
++++ b/pkg/analyzer/imports_test.go
+@@ -347,6 +347,130 @@ func TestImportsAnalyzer_MinorVersionBump_NotMajor(t *testing.T) {
+ 	}
+ }
+ 
++func TestImportsAnalyzer_SkipsGoSum(t *testing.T) {
++	diff := &interfaces.Diff{
++		Files: []interfaces.FileDiff{
++			{
++				Path:   "go.sum",
++				Status: interfaces.FileModified,
++				Hunks: []interfaces.Hunk{
++					{
++						AddedLines: []interfaces.Line{
++							{Number: 5, Content: `github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=`},
++							{Number: 6, Content: `github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=`},
++						},
++					},
++				},
++			},
++		},
++	}
++
++	result, err := NewImportsAnalyzer().Analyze(context.Background(), diff)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(result.Findings) != 0 {
++		t.Fatalf("expected no findings for go.sum, got %d: %v", len(result.Findings), findingIDs(result.Findings))
++	}
++}
++
++func TestImportsAnalyzer_SkipsGoSum_EvenWithoutGoMod(t *testing.T) {
++	// go.sum should always be skipped, even if go.mod is not in the diff.
++	diff := &interfaces.Diff{
++		Files: []interfaces.FileDiff{
++			{
++				Path:   "go.sum",
++				Status: interfaces.FileModified,
++				Hunks: []interfaces.Hunk{
++					{
++						AddedLines: []interfaces.Line{
++							{Number: 5, Content: `github.com/new/dep v1.0.0 h1:abc123=`},
++						},
++					},
++				},
++			},
++		},
++	}
++
++	result, err := NewImportsAnalyzer().Analyze(context.Background(), diff)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(result.Findings) != 0 {
++		t.Fatalf("go.sum should always be skipped, got %d findings", len(result.Findings))
++	}
++}
++
++func TestImportsAnalyzer_SkipsPackageLockJSON_WhenPackageJSONPresent(t *testing.T) {
++	diff := &interfaces.Diff{
++		Files: []interfaces.FileDiff{
++			{
++				Path:   "package.json",
++				Status: interfaces.FileModified,
++				Hunks: []interfaces.Hunk{
++					{
++						AddedLines: []interfaces.Line{
++							{Number: 10, Content: `    "express": "^4.18.0"`},
++						},
++					},
++				},
++			},
++			{
++				Path:   "package-lock.json",
++				Status: interfaces.FileModified,
++				Hunks: []interfaces.Hunk{
++					{
++						AddedLines: []interfaces.Line{
++							{Number: 100, Content: `    "express": { "version": "4.18.0" }`},
++						},
++					},
++				},
++			},
++		},
++	}
++
++	result, err := NewImportsAnalyzer().Analyze(context.Background(), diff)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	// Should only have findings from package.json, not package-lock.json.
++	for _, f := range result.Findings {
++		if f.File == "package-lock.json" {
++			t.Fatalf("package-lock.json should be skipped when package.json is present, got finding: %s", f.Title)
++		}
++	}
++	if len(result.Findings) == 0 {
++		t.Fatal("expected findings from package.json")
++	}
++}
++
++func TestImportsAnalyzer_ScansPackageLockJSON_WhenPackageJSONAbsent(t *testing.T) {
++	// If only package-lock.json changed (e.g., npm audit fix), it should be scanned.
++	diff := &interfaces.Diff{
++		Files: []interfaces.FileDiff{
++			{
++				Path:   "package-lock.json",
++				Status: interfaces.FileModified,
++				Hunks: []interfaces.Hunk{
++					{
++						AddedLines: []interfaces.Line{
++							{Number: 100, Content: `    "lodash": "^4.17.21"`},
++						},
++					},
++				},
++			},
++		},
++	}
++
++	result, err := NewImportsAnalyzer().Analyze(context.Background(), diff)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(result.Findings) == 0 {
++		t.Fatal("expected findings from package-lock.json when package.json is absent")
++	}
++}
++
+ func TestImportsAnalyzer_SkipsBinaryFiles(t *testing.T) {
+ 	diff := &interfaces.Diff{
+ 		Files: []interfaces.FileDiff{
+diff --git a/pkg/analyzer/patterns.go b/pkg/analyzer/patterns.go
+index dbf4f42..33dafec 100644
+--- a/pkg/analyzer/patterns.go
++++ b/pkg/analyzer/patterns.go
+@@ -81,6 +81,10 @@ func (p *PatternsAnalyzer) Analyze(ctx context.Context, diff *interfaces.Diff) (
+ 			continue
+ 		}
+ 
++		if isFixturePath(file.Path) {
++			continue
++		}
++
+ 		isTest := isTestFile(file.Path)
+ 
+ 		for j := range file.Hunks {
+@@ -104,49 +108,53 @@ func (p *PatternsAnalyzer) scanLine(path string, line interfaces.Line, isTest bo
+ 	var findings []interfaces.Finding
+ 	content := line.Content
+ 
+-	// Check SQL string concatenation.
+-	for _, re := range sqlConcatPatterns {
+-		if re.MatchString(content) {
+-			findings = append(findings, interfaces.Finding{
+-				ID:        fmt.Sprintf("PAT-SQL-CONCAT-%d", line.Number),
+-				Category:  interfaces.CategoryPattern,
+-				Severity:  interfaces.SeverityMedium,
+-				File:      path,
+-				StartLine: line.Number,
+-				EndLine:   line.Number,
+-				Title:     "SQL string concatenation detected",
+-				Description: fmt.Sprintf(
+-					"Line %d builds a SQL query via string concatenation, which is vulnerable to SQL injection.",
+-					line.Number,
+-				),
+-				Suggestion: "Use parameterized queries or a query builder instead of string concatenation.",
+-				Source:     "patterns",
+-				Confidence: 0.80,
+-			})
+-			break // One finding per line for this category.
++	// Check SQL string concatenation (skip test files — tests intentionally contain bad patterns).
++	if !isTest {
++		for _, re := range sqlConcatPatterns {
++			if re.MatchString(content) {
++				findings = append(findings, interfaces.Finding{
++					ID:        fmt.Sprintf("PAT-SQL-CONCAT-%d", line.Number),
++					Category:  interfaces.CategoryPattern,
++					Severity:  interfaces.SeverityMedium,
++					File:      path,
++					StartLine: line.Number,
++					EndLine:   line.Number,
++					Title:     "SQL string concatenation detected",
++					Description: fmt.Sprintf(
++						"Line %d builds a SQL query via string concatenation, which is vulnerable to SQL injection.",
++						line.Number,
++					),
++					Suggestion: "Use parameterized queries or a query builder instead of string concatenation.",
++					Source:     "patterns",
++					Confidence: 0.80,
++				})
++				break // One finding per line for this category.
++			}
+ 		}
+ 	}
+ 
+-	// Check empty catch/except blocks.
+-	for _, re := range emptyCatchPatterns {
+-		if re.MatchString(content) {
+-			findings = append(findings, interfaces.Finding{
+-				ID:        fmt.Sprintf("PAT-EMPTY-CATCH-%d", line.Number),
+-				Category:  interfaces.CategoryPattern,
+-				Severity:  interfaces.SeverityMedium,
+-				File:      path,
+-				StartLine: line.Number,
+-				EndLine:   line.Number,
+-				Title:     "Empty catch/except block",
+-				Description: fmt.Sprintf(
+-					"Line %d has an empty error handler. Swallowing errors silently hides bugs.",
+-					line.Number,
+-				),
+-				Suggestion: "Log the error or handle it explicitly. If intentionally ignoring, add a comment explaining why.",
+-				Source:     "patterns",
+-				Confidence: 0.85,
+-			})
+-			break
++	// Check empty catch/except blocks (skip test files).
++	if !isTest {
++		for _, re := range emptyCatchPatterns {
++			if re.MatchString(content) {
++				findings = append(findings, interfaces.Finding{
++					ID:        fmt.Sprintf("PAT-EMPTY-CATCH-%d", line.Number),
++					Category:  interfaces.CategoryPattern,
++					Severity:  interfaces.SeverityMedium,
++					File:      path,
++					StartLine: line.Number,
++					EndLine:   line.Number,
++					Title:     "Empty catch/except block",
++					Description: fmt.Sprintf(
++						"Line %d has an empty error handler. Swallowing errors silently hides bugs.",
++						line.Number,
++					),
++					Suggestion: "Log the error or handle it explicitly. If intentionally ignoring, add a comment explaining why.",
++					Source:     "patterns",
++					Confidence: 0.85,
++				})
++				break
++			}
+ 		}
+ 	}
+ 
+@@ -180,8 +188,8 @@ func (p *PatternsAnalyzer) scanLine(path string, line interfaces.Line, isTest bo
+ 		}
+ 	}
+ 
+-	// Check TODO/FIXME/HACK comments.
+-	if todoPattern.MatchString(content) {
++	// Check TODO/FIXME/HACK comments (skip test files — test TODOs are lower priority).
++	if !isTest && todoPattern.MatchString(content) {
+ 		matches := todoPattern.FindStringSubmatch(content)
+ 		tag := strings.ToUpper(matches[1])
+ 		findings = append(findings, interfaces.Finding{
+@@ -215,3 +223,15 @@ func isTestFile(path string) bool {
+ 	}
+ 	return false
+ }
++
++// isFixturePath checks if a file path is under tests/fixtures/ or is a .diff file.
++func isFixturePath(path string) bool {
++	lower := strings.ToLower(path)
++	if strings.Contains(lower, "tests/fixtures/") {
++		return true
++	}
++	if strings.HasSuffix(lower, ".diff") {
++		return true
++	}
++	return false
++}
+diff --git a/pkg/analyzer/patterns_test.go b/pkg/analyzer/patterns_test.go
+index 18c68f9..d0b9f84 100644
+--- a/pkg/analyzer/patterns_test.go
++++ b/pkg/analyzer/patterns_test.go
+@@ -262,6 +262,129 @@ func TestPatternsAnalyzer_MultiplePatterns_SingleLine(t *testing.T) {
+ 	}
+ }
+ 
++func TestPatternsAnalyzer_SkipsFixturePaths(t *testing.T) {
++	fixturePaths := []string{
++		"tests/fixtures/bad-pr/handler.go",
++		"tests/fixtures/vulnerable-pr/db.go",
++	}
++
++	for _, path := range fixturePaths {
++		t.Run(path, func(t *testing.T) {
++			diff := diffWithAddedLines(path,
++				`query := "SELECT * FROM users WHERE id=" + userID`,
++				`} catch (e) {}`,
++				`fmt.Println("debug")`,
++				`// TODO: fix this`,
++			)
++			result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if len(result.Findings) != 0 {
++				t.Fatalf("expected no findings for fixture path %q, got %d: %v",
++					path, len(result.Findings), findingIDs(result.Findings))
++			}
++		})
++	}
++}
++
++func TestPatternsAnalyzer_SkipsDiffFiles(t *testing.T) {
++	diff := diffWithAddedLines("tests/fixtures/diffs/bad-code.diff",
++		`query := "SELECT * FROM users WHERE id=" + userID`,
++		`} catch (e) {}`,
++		`// TODO: fix later`,
++	)
++
++	result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(result.Findings) != 0 {
++		t.Fatalf("expected no findings for .diff file, got %d: %v",
++			len(result.Findings), findingIDs(result.Findings))
++	}
++}
++
++func TestPatternsAnalyzer_SQLConcat_SkippedInTestFiles(t *testing.T) {
++	testPaths := []string{
++		"pkg/db/db_test.go",
++		"src/db.test.js",
++		"tests/test_db.py",
++	}
++
++	for _, path := range testPaths {
++		t.Run(path, func(t *testing.T) {
++			diff := diffWithAddedLines(path,
++				`query := "SELECT * FROM users WHERE id=" + userID`,
++			)
++			result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if hasFindingWithID(result.Findings, "PAT-SQL-CONCAT") {
++				t.Fatalf("SQL concat in test file %q should not be flagged", path)
++			}
++		})
++	}
++}
++
++func TestPatternsAnalyzer_EmptyCatch_SkippedInTestFiles(t *testing.T) {
++	testPaths := []string{
++		"pkg/handler/handler_test.go",
++		"src/handler.test.ts",
++	}
++
++	for _, path := range testPaths {
++		t.Run(path, func(t *testing.T) {
++			diff := diffWithAddedLines(path,
++				`} catch (e) {}`,
++			)
++			result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if hasFindingWithID(result.Findings, "PAT-EMPTY-CATCH") {
++				t.Fatalf("empty catch in test file %q should not be flagged", path)
++			}
++		})
++	}
++}
++
++func TestPatternsAnalyzer_TODO_SkippedInTestFiles(t *testing.T) {
++	testPaths := []string{
++		"pkg/service/service_test.go",
++		"src/service.spec.ts",
++	}
++
++	for _, path := range testPaths {
++		t.Run(path, func(t *testing.T) {
++			diff := diffWithAddedLines(path,
++				`// TODO: add more test cases`,
++			)
++			result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if hasFindingWithID(result.Findings, "PAT-TODO") {
++				t.Fatalf("TODO in test file %q should not be flagged", path)
++			}
++		})
++	}
++}
++
++func TestPatternsAnalyzer_SQLConcat_StillDetectedInProductionCode(t *testing.T) {
++	diff := diffWithAddedLines("db/queries.go",
++		`query := "SELECT * FROM users WHERE id=" + userID`,
++	)
++	result, err := NewPatternsAnalyzer().Analyze(context.Background(), diff)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if !hasFindingWithID(result.Findings, "PAT-SQL-CONCAT") {
++		t.Fatal("SQL concat in production code should still be flagged")
++	}
++}
++
+ func TestPatternsAnalyzer_SkipsDeletedFiles(t *testing.T) {
+ 	diff := &interfaces.Diff{
+ 		Files: []interfaces.FileDiff{
+diff --git a/pkg/analyzer/secrets.go b/pkg/analyzer/secrets.go
+index eb237dc..611e167 100644
+--- a/pkg/analyzer/secrets.go
++++ b/pkg/analyzer/secrets.go
+@@ -104,6 +104,30 @@ var falsePositivePathSuffixes = []string{
+ 	"testdata/",
+ 	"fixtures/",
+ 	"__mocks__/",
++	".diff",
++	"go.sum",
++	".lock",
++	"package-lock.json",
++}
++
++// Prefixes indicating a line is a checksum, not a secret.
++var checksumPrefixes = []string{
++	"h1:",
++	"sha256:",
++	"sha512:",
++	"sha1:",
++	"sha384:",
++}
++
++// isChecksumLine reports whether the line looks like a checksum entry.
++func isChecksumLine(line string) bool {
++	trimmed := strings.TrimSpace(line)
++	for _, prefix := range checksumPrefixes {
++		if strings.HasPrefix(trimmed, prefix) {
++			return true
++		}
++	}
++	return false
+ }
+ 
+ // SecretsAnalyzer detects hardcoded secrets, API keys, and credentials in diffs.
+@@ -207,6 +231,10 @@ func (s *SecretsAnalyzer) scanLine(path string, line interfaces.Line) []interfac
+ 
+ // checkEntropy looks for high-entropy tokens on a line that may be secrets.
+ func (s *SecretsAnalyzer) checkEntropy(path string, line interfaces.Line) (interfaces.Finding, bool) {
++	if isChecksumLine(line.Content) {
++		return interfaces.Finding{}, false
++	}
++
+ 	tokens := extractTokens(line.Content)
+ 	for _, token := range tokens {
+ 		if len(token) < s.entropyMinLength {
+diff --git a/pkg/analyzer/secrets_test.go b/pkg/analyzer/secrets_test.go
+index 95f2c4e..e4649c3 100644
+--- a/pkg/analyzer/secrets_test.go
++++ b/pkg/analyzer/secrets_test.go
+@@ -421,6 +421,84 @@ func TestSecretsAnalyzer_EmptyDiff(t *testing.T) {
+ 	}
+ }
+ 
++func TestSecretsAnalyzer_SkipsGoSumFiles(t *testing.T) {
++	diff := diffWithAddedLines("go.sum",
++		`github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=`,
++		`github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=`,
++	)
++
++	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(result.Findings) != 0 {
++		t.Fatalf("expected no findings for go.sum, got %d", len(result.Findings))
++	}
++}
++
++func TestSecretsAnalyzer_SkipsLockFiles(t *testing.T) {
++	lockFiles := []string{
++		"yarn.lock",
++		"Cargo.lock",
++		"Gemfile.lock",
++		"package-lock.json",
++	}
++
++	for _, path := range lockFiles {
++		t.Run(path, func(t *testing.T) {
++			diff := diffWithAddedLines(path,
++				`password = "SuperS3cretP@ssword!"`,
++			)
++			result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if len(result.Findings) != 0 {
++				t.Fatalf("expected no findings for lock file %q, got %d", path, len(result.Findings))
++			}
++		})
++	}
++}
++
++func TestSecretsAnalyzer_SkipsDiffFiles(t *testing.T) {
++	diff := diffWithAddedLines("tests/fixtures/diffs/secrets-leak.diff",
++		`password = "SuperS3cretP@ssword!"`,
++		`aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYKZ6NR4TWAB`,
++	)
++
++	result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(result.Findings) != 0 {
++		t.Fatalf("expected no findings for .diff file, got %d", len(result.Findings))
++	}
++}
++
++func TestSecretsAnalyzer_EntropySkipsChecksumLines(t *testing.T) {
++	checksumLines := []string{
++		`h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=`,
++		`sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824`,
++		`sha512:cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce`,
++		`sha1:a94a8fe5ccb19ba61c4c0873d391e987982fbbd3aabbccdd`,
++	}
++
++	for _, line := range checksumLines {
++		t.Run(line[:6], func(t *testing.T) {
++			diff := diffWithAddedLines("config.go", line)
++			result, err := NewSecretsAnalyzer().Analyze(context.Background(), diff)
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			for _, f := range result.Findings {
++				if f.Title == "High-entropy string detected" {
++					t.Fatalf("checksum line should not trigger entropy check: %q", line)
++				}
++			}
++		})
++	}
++}
++
+ func TestSecretsAnalyzer_ImplementsInterface(t *testing.T) {
+ 	var _ Analyzer = NewSecretsAnalyzer()
+ }
